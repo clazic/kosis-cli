@@ -81,12 +81,49 @@ func (c *Client) Data(orgID, tblID string, opts DataOptions) ([]DataRow, error) 
 		return nil, err
 	}
 
+	// jsonVD=Y 사용 시 키가 한글로 반환됨 → 영문 키로 치환
+	bodyStr := normalizeDataKeys(string(body))
+
 	var results []DataRow
-	if err := json.Unmarshal(body, &results); err != nil {
+	if err := json.Unmarshal([]byte(bodyStr), &results); err != nil {
 		return nil, fmt.Errorf("응답 파싱 실패: %w", err)
 	}
 
 	return results, nil
+}
+
+// normalizeDataKeys는 jsonVD=Y로 인한 한글 JSON 키를 영문 키로 치환합니다.
+func normalizeDataKeys(s string) string {
+	replacer := strings.NewReplacer(
+		`"분류값명1"`, `"C1_NM"`,
+		`"분류값명2"`, `"C2_NM"`,
+		`"분류값명3"`, `"C3_NM"`,
+		`"분류값명4"`, `"C4_NM"`,
+		`"분류값명5"`, `"C5_NM"`,
+		`"분류값명6"`, `"C6_NM"`,
+		`"분류값명7"`, `"C7_NM"`,
+		`"분류값명8"`, `"C8_NM"`,
+		`"분류값1"`, `"C1"`,
+		`"분류값2"`, `"C2"`,
+		`"분류값3"`, `"C3"`,
+		`"분류값4"`, `"C4"`,
+		`"분류값5"`, `"C5"`,
+		`"분류값6"`, `"C6"`,
+		`"분류값7"`, `"C7"`,
+		`"분류값8"`, `"C8"`,
+		`"항목명"`, `"ITM_NM"`,
+		`"항목"`, `"ITM_ID"`,
+		`"단위"`, `"UNIT_NM"`,
+		`"단위ID"`, `"UNIT_ID"`,
+		`"수록주기"`, `"PRD_SE"`,
+		`"수록시점"`, `"PRD_DE"`,
+		`"수치값"`, `"DT"`,
+		`"비고"`, `"LST_CHN_DE"`,
+		`"기관코드"`, `"ORG_ID"`,
+		`"통계표코드"`, `"TBL_ID"`,
+		`"통계표명"`, `"TBL_NM"`,
+	)
+	return replacer.Replace(s)
 }
 
 // DataWithPeriods handles non-continuous periods by making multiple requests.
@@ -163,8 +200,9 @@ func (c *Client) dataWithSpecificKey(orgID, tblID string, opts DataOptions, keyI
 		return nil, err
 	}
 
+	bodyStr := normalizeDataKeys(string(body))
 	var results []DataRow
-	if err := json.Unmarshal(body, &results); err != nil {
+	if err := json.Unmarshal([]byte(bodyStr), &results); err != nil {
 		return nil, fmt.Errorf("응답 파싱 실패: %w", err)
 	}
 

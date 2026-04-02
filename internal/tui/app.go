@@ -61,11 +61,7 @@ type MetaInfo struct {
 	PeriodInfo      string
 	NumClassGroups  int               // 분류 그룹 수 (objL1, objL2... 몇 개인지)
 	ClassGroupNames map[int]string    // 분류 그룹 번호(1~8) → 그룹명 (예: "시도별", "산업별")
-}
-
-// DataRow는 결과 데이터의 한 행입니다.
-type DataRow struct {
-	Fields map[string]string
+	ColumnMeta      *api.ColumnMeta   // 컬럼 메타정보 (실제 컬럼명)
 }
 
 // 비동기 메시지 타입들
@@ -80,7 +76,7 @@ type metaResultMsg struct {
 }
 
 type dataResultMsg struct {
-	data []DataRow
+	data []api.DataRow
 	err  error
 }
 
@@ -93,7 +89,7 @@ type Model struct {
 	searchResults []SearchItem // 검색 결과 목록
 	selectedTable *TableInfo   // 선택된 통계표
 	metaInfo      *MetaInfo    // 메타 정보
-	resultData    []DataRow    // 조회 결과 데이터
+	resultData    []api.DataRow // 조회 결과 데이터
 	statusMsg     string       // 상태바 메시지
 	loading       bool         // 로딩 상태
 	err           error        // 에러 메시지
@@ -109,6 +105,7 @@ type Model struct {
 	paramLatest   string       // 최근 N개 파라미터
 	resultScrollX int          // 결과 테이블 가로 스크롤 오프셋
 	metaScrollY   int          // 메타 정보 세로 스크롤 오프셋
+	lastCLICmd    string       // 마지막 데이터 조회 CLI 명령어
 }
 
 // New는 새로운 Model을 생성합니다.
@@ -267,40 +264,25 @@ func (m Model) doMeta(orgID, tblID string) tea.Cmd {
 			prdCode := convertPrdSe(p.PrdSe)
 			meta.PeriodInfo = "prdSe=" + prdCode + " " + p.StrtPrdDe + "~" + p.EndPrdDe
 		}
+		// ColumnMeta 생성: 메타 정보에서 실제 컬럼명 추출
+		meta.ColumnMeta = summary.BuildColumnMeta()
 		return metaResultMsg{meta: meta}
 	}
 }
 
 // doData는 데이터 조회를 비동기로 실행하는 커맨드입니다.
+// 4만 셀 초과 시 자동 분할 조회합니다.
 func (m Model) doData(orgID, tblID string, opts api.DataOptions) tea.Cmd {
 	return func() tea.Msg {
 		if m.client == nil {
 			return dataResultMsg{err: fmt.Errorf("API 클라이언트가 초기화되지 않았습니다")}
 		}
-		results, err := m.client.Data(orgID, tblID, opts)
+		splitOpts := api.SplitOptions{MaxCells: 40000}
+		results, err := m.client.DataWithAutoSplit(orgID, tblID, opts, splitOpts, nil)
 		if err != nil {
 			return dataResultMsg{err: err}
 		}
-		var rows []DataRow
-		for _, r := range results {
-			// api.DataRow를 tui.DataRow로 변환 (모든 필드 포함)
-			fields := map[string]string{
-				"C1_NM":   r.C1NM,
-				"C2_NM":   r.C2NM,
-				"C3_NM":   r.C3NM,
-				"C4_NM":   r.C4NM,
-				"C5_NM":   r.C5NM,
-				"C6_NM":   r.C6NM,
-				"C7_NM":   r.C7NM,
-				"C8_NM":   r.C8NM,
-				"ITM_NM":  r.ItmNM,
-				"PRD_DE":  r.PrdDe,
-				"DT":      r.DT,
-				"UNIT_NM": r.UnitNM,
-			}
-			rows = append(rows, DataRow{Fields: fields})
-		}
-		return dataResultMsg{data: rows}
+		return dataResultMsg{data: results}
 	}
 }
 
@@ -514,24 +496,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 				}
-				m.paramClass1 = "ALL"
-				m.paramItem = "ALL"
 				m.paramPeriod = period
 				m.paramLatest = "5"
 
-				firstItem := "T10"
-				if len(m.metaInfo.Items) > 0 {
-					firstItem = m.metaInfo.Items[0].Code
-				}
+				// 항목은 ALL로 전체 조회 (종사자수, 급여액, 출하액 등 모두 포함)
+				itemValue := "ALL"
 
 				opts := api.DataOptions{
-					Item:         firstItem,
+					Item:         itemValue,
 					PrdSe:        period,
 					NewEstPrdCnt: "5",
 				}
-				// 분류 그룹 수만큼만 ALL 설정 (존재하지 않는 분류에 ALL을 보내면 에러)
+
 				n := m.metaInfo.NumClassGroups
-				if n >= 1 { opts.Class1 = "ALL" }
+				// 분류가 20개 이상이면 첫 번째 값만 조회 (4만 셀 제한 방지)
+				classValue := "ALL"
+				if len(m.metaInfo.Classifications) > 20 {
+					classValue = m.metaInfo.Classifications[0].Code
+				}
+
+				if n >= 1 { opts.Class1 = classValue }
 				if n >= 2 { opts.Class2 = "ALL" }
 				if n >= 3 { opts.Class3 = "ALL" }
 				if n >= 4 { opts.Class4 = "ALL" }
@@ -539,9 +523,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if n >= 6 { opts.Class6 = "ALL" }
 				if n >= 7 { opts.Class7 = "ALL" }
 				if n >= 8 { opts.Class8 = "ALL" }
+
+				m.paramClass1 = opts.Class1
+				m.paramItem = itemValue
+
+				// CLI 명령어 생성
+				cmd := fmt.Sprintf("kosis d %s %s -i %s -p %s -l 5", m.selectedTable.OrgID, m.selectedTable.TblID, itemValue, period)
+				if n >= 1 { cmd += fmt.Sprintf(" -c1 %s", opts.Class1) }
+				if n >= 2 { cmd += " --class2 ALL" }
+				if n >= 3 { cmd += " --class3 ALL" }
+				if n >= 4 { cmd += " --class4 ALL" }
+				if n >= 5 { cmd += " --class5 ALL" }
+				if n >= 6 { cmd += " --class6 ALL" }
+				if n >= 7 { cmd += " --class7 ALL" }
+				if n >= 8 { cmd += " --class8 ALL" }
+				m.lastCLICmd = cmd
+
 				m.loading = true
 				m.activePanel = PanelResult
-				m.statusMsg = "📊 데이터 조회 중... (ALL, ALL, 최근 5개)"
+				m.statusMsg = fmt.Sprintf("📊 데이터 조회 중... (c1=%s, 최근 5개)", opts.Class1)
 				return m, m.doData(m.selectedTable.OrgID, m.selectedTable.TblID, opts)
 			} else {
 				m.statusMsg = "✓ 메타 로드 완료"
@@ -556,7 +556,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.resultData = msg.data
 			m.resultScrollX = 0
-			m.statusMsg = fmt.Sprintf("✓ %d건 조회 완료", len(msg.data))
+			colInfo := ""
+			if m.metaInfo != nil && m.metaInfo.ColumnMeta != nil {
+				for _, c := range m.metaInfo.ColumnMeta.Columns {
+					colInfo += c.Key + ":" + c.Label + " "
+				}
+			}
+			m.statusMsg = fmt.Sprintf("✓ %d건 조회 완료 [%s]", len(msg.data), colInfo)
 		}
 
 	case tea.WindowSizeMsg:
@@ -980,42 +986,26 @@ func (m Model) renderResultSection(width int, viewHeight int) string {
 		key   string
 		label string
 	}
-	// 분류 컬럼명을 메타 정보에서 가져옴
-	classLabel := func(n int) string {
-		if m.metaInfo != nil {
-			if name, ok := m.metaInfo.ClassGroupNames[n]; ok {
-				return name
-			}
-		}
-		return fmt.Sprintf("분류%d", n)
-	}
-	candidateCols := []colDef{
-		{"C1_NM", classLabel(1)},
-		{"C2_NM", classLabel(2)},
-		{"C3_NM", classLabel(3)},
-		{"C4_NM", classLabel(4)},
-		{"C5_NM", classLabel(5)},
-		{"C6_NM", classLabel(6)},
-		{"C7_NM", classLabel(7)},
-		{"C8_NM", classLabel(8)},
-		{"ITM_NM", "항목"},
-		{"PRD_DE", "시점"},
-		{"DT", "수치값"},
-		{"UNIT_NM", "단위"},
-	}
-
-	// 데이터 전체를 스캔해서 값이 있는 컬럼만 선별
+	// ColumnMeta에서 컬럼 정보를 가져와서 데이터에 값이 있는 것만 필터링
 	var activeCols []colDef
-	for _, col := range candidateCols {
-		hasValue := false
-		for _, row := range m.resultData {
-			if v := row.Fields[col.key]; v != "" {
-				hasValue = true
-				break
-			}
+	if m.metaInfo != nil && m.metaInfo.ColumnMeta != nil {
+		filtered := m.metaInfo.ColumnMeta.FilterByData(m.resultData)
+		for _, col := range filtered.Columns {
+			activeCols = append(activeCols, colDef{key: col.Key, label: col.Label})
 		}
-		if hasValue {
-			activeCols = append(activeCols, col)
+	} else {
+		// 메타 없을 때 폴백
+		fallbackCols := []colDef{
+			{"C1_NM", "분류1"}, {"C2_NM", "분류2"}, {"ITM_NM", "항목"},
+			{"PRD_DE", "시점"}, {"DT", "수치값"}, {"UNIT_NM", "단위"},
+		}
+		for _, col := range fallbackCols {
+			for _, row := range m.resultData {
+				if row.GetField(col.key) != "" {
+					activeCols = append(activeCols, col)
+					break
+				}
+			}
 		}
 	}
 
@@ -1028,7 +1018,7 @@ func (m Model) renderResultSection(width int, viewHeight int) string {
 	for ci, col := range activeCols {
 		maxW := stringDisplayWidth(col.label)
 		for _, row := range m.resultData {
-			w := stringDisplayWidth(row.Fields[col.key])
+			w := stringDisplayWidth(row.GetField(col.key))
 			if w > maxW {
 				maxW = w
 			}
@@ -1036,8 +1026,9 @@ func (m Model) renderResultSection(width int, viewHeight int) string {
 		if maxW < 4 {
 			maxW = 4
 		}
-		if maxW > 30 {
-			maxW = 30 // 컬럼 최대 폭 제한
+		// 가로 스크롤이 있으므로 컬럼 폭을 데이터에 맞춤 (최대 50)
+		if maxW > 50 {
+			maxW = 50
 		}
 		colWidths[ci] = maxW
 	}
@@ -1132,12 +1123,18 @@ func (m Model) renderResultSection(width int, viewHeight int) string {
 		row := m.resultData[i]
 		var cells []string
 		for _, col := range activeCols {
-			cells = append(cells, row.Fields[col.key])
+			cells = append(cells, row.GetField(col.key))
 		}
 		lines = append(lines, applyHScroll(buildRow(cells)))
 	}
 	if totalRows > showRows {
-		lines = append(lines, fmt.Sprintf("  ... 외 %d건 (CLI: kosis d 로 전체 조회)", totalRows-showRows))
+		lines = append(lines, fmt.Sprintf("  ... 외 %d건", totalRows-showRows))
+	}
+
+	// CLI 명령어 표시
+	if m.lastCLICmd != "" {
+		lines = append(lines, "───────────────────")
+		lines = append(lines, "💻 CLI: "+m.lastCLICmd)
 	}
 
 	return sectionStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...))

@@ -1,6 +1,8 @@
 // Package api provides KOSIS Open API client and data structures.
 package api
 
+import "fmt"
+
 // SearchResult represents a search result from statisticsSearch API.
 type SearchResult struct {
 	OrgID     string `json:"ORG_ID"`
@@ -42,6 +44,94 @@ type MetaSummaryResult struct {
 	Periods         []MetaResult `json:"periods"`
 }
 
+// ColumnDef는 데이터 컬럼 하나의 정의입니다.
+type ColumnDef struct {
+	Key      string // 필드 키 (예: "C1_NM", "ITM_NM", "PRD_DE", "DT")
+	Label    string // 표시 이름 (예: "시도별", "항목", "시점", "수치값")
+	HasValue bool   // 데이터에 값이 있는 컬럼인지
+}
+
+// ColumnMeta는 통계표의 컬럼 메타정보입니다.
+// 메타 조회 결과에서 생성되어 데이터 표시에 사용됩니다.
+type ColumnMeta struct {
+	Columns []ColumnDef
+}
+
+// BuildColumnMeta는 MetaSummaryResult에서 컬럼 메타정보를 생성합니다.
+func (s *MetaSummaryResult) BuildColumnMeta() *ColumnMeta {
+	cm := &ColumnMeta{}
+
+	// 분류 그룹: ObjID 등장 순서대로 C1~C8 매핑
+	seen := map[string]bool{}
+	classIdx := 1
+	for _, c := range s.Classifications {
+		if c.ObjID != "" && !seen[c.ObjID] {
+			seen[c.ObjID] = true
+			label := c.ObjNM
+			if label == "" {
+				label = fmt.Sprintf("분류%d", classIdx)
+			}
+			cm.Columns = append(cm.Columns, ColumnDef{
+				Key:   fmt.Sprintf("C%d_NM", classIdx),
+				Label: label,
+			})
+			classIdx++
+			if classIdx > 8 {
+				break
+			}
+		}
+	}
+
+	// 항목
+	if len(s.Items) > 0 {
+		label := "항목"
+		if s.Items[0].ObjNM != "" {
+			label = s.Items[0].ObjNM
+		}
+		cm.Columns = append(cm.Columns, ColumnDef{Key: "ITM_NM", Label: label})
+	}
+
+	// 고정 컬럼 (빠짐없이 모두 포함)
+	cm.Columns = append(cm.Columns,
+		ColumnDef{Key: "PRD_SE", Label: "수록주기"},
+		ColumnDef{Key: "PRD_DE", Label: "시점"},
+		ColumnDef{Key: "DT", Label: "수치값"},
+		ColumnDef{Key: "UNIT_NM", Label: "단위"},
+		ColumnDef{Key: "LST_CHN_DE", Label: "비고"},
+	)
+
+	return cm
+}
+
+// FilterByData는 실제 데이터에 값이 있는 컬럼만 필터링합니다.
+func (cm *ColumnMeta) FilterByData(rows []DataRow) *ColumnMeta {
+	filtered := &ColumnMeta{}
+	for _, col := range cm.Columns {
+		hasValue := false
+		for _, row := range rows {
+			if v := row.GetField(col.Key); v != "" {
+				hasValue = true
+				break
+			}
+		}
+		if hasValue {
+			col.HasValue = true
+			filtered.Columns = append(filtered.Columns, col)
+		}
+	}
+	return filtered
+}
+
+// GetLabel는 키에 해당하는 라벨을 반환합니다.
+func (cm *ColumnMeta) GetLabel(key string) string {
+	for _, col := range cm.Columns {
+		if col.Key == key {
+			return col.Label
+		}
+	}
+	return key
+}
+
 // DataRow represents a single data row from statisticsParameterData API.
 type DataRow struct {
 	OrgID  string `json:"ORG_ID"`
@@ -71,6 +161,48 @@ type DataRow struct {
 	PrdDe  string `json:"PRD_DE"`
 	DT     string `json:"DT"`
 	LstChn string `json:"LST_CHN_DE"`
+}
+
+// GetField는 키 이름으로 DataRow의 필드 값을 반환합니다.
+func (r DataRow) GetField(key string) string {
+	switch key {
+	case "C1_NM":
+		return r.C1NM
+	case "C2_NM":
+		return r.C2NM
+	case "C3_NM":
+		return r.C3NM
+	case "C4_NM":
+		return r.C4NM
+	case "C5_NM":
+		return r.C5NM
+	case "C6_NM":
+		return r.C6NM
+	case "C7_NM":
+		return r.C7NM
+	case "C8_NM":
+		return r.C8NM
+	case "ITM_NM":
+		return r.ItmNM
+	case "PRD_DE":
+		return r.PrdDe
+	case "DT":
+		return r.DT
+	case "UNIT_NM":
+		return r.UnitNM
+	case "PRD_SE":
+		return r.PrdSe
+	case "ORG_ID":
+		return r.OrgID
+	case "TBL_ID":
+		return r.TblID
+	case "TBL_NM":
+		return r.TblNM
+	case "LST_CHN_DE":
+		return r.LstChn
+	default:
+		return ""
+	}
 }
 
 // StatList represents an item from statisticsList.getList API.

@@ -34,8 +34,9 @@ func (c *Client) DataWithAutoSplit(orgID, tblID string, opts DataOptions, splitO
 	}
 
 	// 1. Meta API로 예상 셀 수 계산
+	summary, summaryErr := c.MetaSummary(orgID, tblID)
 	estimatedCells, err := c.estimateCellCount(orgID, tblID, opts)
-	if err != nil {
+	if err != nil || summaryErr != nil {
 		// Meta 조회 실패 시 일반 조회 시도 (meta API가 없을 수 있음)
 		return c.Data(orgID, tblID, opts)
 	}
@@ -55,12 +56,48 @@ func (c *Client) DataWithAutoSplit(orgID, tblID string, opts DataOptions, splitO
 
 	// 4. 20만 초과 시 경고 (지금은 경고만, 실제로는 프롬프트 필요)
 	if estimatedCells > 200000 {
-		fmt.Printf("⚠ 예상 셀 수: 약 %d건. 이는 조회 시간이 오래 걸릴 수 있습니다.\n", estimatedCells)
-		fmt.Printf("  범위를 축소하거나 --periods를 사용하여 특정 시점만 조회하세요.\n")
+		fmt.Fprintf(os.Stderr, "⚠ 예상 셀 수: 약 %d건. 이는 조회 시간이 오래 걸릴 수 있습니다.\n", estimatedCells)
+		fmt.Fprintf(os.Stderr, "  범위를 축소하거나 --periods를 사용하여 특정 시점만 조회하세요.\n")
 		// 현재 단계에서는 경고만 하고 계속 진행
 	}
 
-	// 5. 시점 축으로 분할
+	// 5. start/end가 없으면 메타에서 추출 (분할에 필요)
+	if opts.StartPrdDe == "" || opts.EndPrdDe == "" {
+		if summary != nil && len(summary.Periods) > 0 {
+			for _, p := range summary.Periods {
+				prdCode := strings.ToUpper(strings.TrimSpace(p.PrdSe))
+				// 수록주기가 매칭되면 시점 범위를 설정
+				optsPrd := strings.ToUpper(opts.PrdSe)
+				prdMatch := (optsPrd == "" || prdCode == optsPrd ||
+					(optsPrd == "Y" && (prdCode == "년" || prdCode == "Y")) ||
+					(optsPrd == "M" && (prdCode == "월" || prdCode == "M")) ||
+					(optsPrd == "Q" && (prdCode == "분기" || prdCode == "Q")) ||
+					(optsPrd == "H" && (prdCode == "반기" || prdCode == "H")))
+				if prdMatch && p.StrtPrdDe != "" && p.EndPrdDe != "" {
+					// 시점 형식 정규화 (예: "1995.01" → "199501", "2025 4/4" → "20254")
+					start := strings.ReplaceAll(strings.ReplaceAll(p.StrtPrdDe, ".", ""), " ", "")
+					end := strings.ReplaceAll(strings.ReplaceAll(p.EndPrdDe, ".", ""), " ", "")
+					// 분기 형식 변환: "19951/4" → "19951"
+					start = strings.Split(start, "/")[0]
+					end = strings.Split(end, "/")[0]
+
+					// --latest N 사용 시: 전체 범위가 아닌 최근 N개 시점만 계산
+					if opts.NewEstPrdCnt != "" {
+						if n, parseErr := strconv.Atoi(opts.NewEstPrdCnt); parseErr == nil && n > 0 {
+							start = c.calcLatestStart(end, n, opts.PrdSe)
+						}
+					}
+
+					opts.StartPrdDe = start
+					opts.EndPrdDe = end
+					opts.NewEstPrdCnt = "" // start/end를 쓰므로 latest 제거
+					break
+				}
+			}
+		}
+	}
+
+	// 시점 축으로 분할
 	chunks := c.splitByPeriod(opts, estimatedCells, splitOpts.MaxCells)
 	if len(chunks) == 0 {
 		// 시점 분할이 불가능하면 일반 조회
@@ -92,6 +129,10 @@ func (c *Client) dataWithAutoSplitSequential(orgID, tblID string, opts DataOptio
 
 		results, err := c.Data(orgID, tblID, chunkOpts)
 		if err != nil {
+			// API 오류 코드 30: "데이터가 존재하지 않습니다" → 해당 구간은 건너뜀
+			if strings.Contains(err.Error(), "API 오류 [30]") {
+				continue
+			}
 			return nil, fmt.Errorf("분할 조회 [%s~%s] 실패: %w", chunk.Start, chunk.End, err)
 		}
 
@@ -151,14 +192,17 @@ func (c *Client) dataWithAutoSplitParallel(orgID, tblID string, opts DataOptions
 			progressFn(completedCount, len(chunks))
 		}
 
-		// 429 에러 발생 시 저장하고 계속 진행 (다른 키로 재시도 가능)
-		if r.Err != nil && strings.Contains(r.Err.Error(), "429") {
-			lastErr = r.Err
-			continue
-		}
-
-		// 다른 에러 발생 시 즉시 반환
 		if r.Err != nil {
+			// API 오류 코드 30: "데이터가 존재하지 않습니다" → 해당 구간은 건너뜀
+			if strings.Contains(r.Err.Error(), "API 오류 [30]") {
+				continue
+			}
+			// 429 에러 발생 시 저장하고 계속 진행 (다른 키로 재시도 가능)
+			if strings.Contains(r.Err.Error(), "429") {
+				lastErr = r.Err
+				continue
+			}
+			// 다른 에러 발생 시 즉시 반환
 			return nil, fmt.Errorf("분할 조회 [%d] 실패: %w", r.Index, r.Err)
 		}
 	}
@@ -177,34 +221,117 @@ func (c *Client) dataWithAutoSplitParallel(orgID, tblID string, opts DataOptions
 	return merged, nil
 }
 
+// countFilterValues는 필터 값에서 실제 선택된 개수를 추정합니다.
+// "ALL" → metaCount, "" → 1, "00+11+21" → 3, "11*" → metaCount/4 (추정)
+func countFilterValues(filterVal string, metaCount int) int {
+	if filterVal == "" {
+		return 1
+	}
+	upper := strings.ToUpper(filterVal)
+	if upper == "ALL" {
+		return metaCount
+	}
+	if strings.HasSuffix(filterVal, "*") {
+		// 하위 전체 선택: 전체의 1/4로 추정
+		est := metaCount / 4
+		if est < 1 {
+			est = 1
+		}
+		return est
+	}
+	// "00+11+21" → + 로 구분된 개수
+	return len(strings.Split(filterVal, "+"))
+}
+
 // estimateCellCount meta 정보로 예상 셀 수 계산
-// 셀 수 = 분류값 개수 × 항목 개수 × 시점 개수 × 약 10 (출력컬럼)
+// 쿼리 옵션의 실제 필터값을 반영하여 계산합니다.
 func (c *Client) estimateCellCount(orgID, tblID string, opts DataOptions) (int, error) {
 	summary, err := c.MetaSummary(orgID, tblID)
 	if err != nil {
 		return 0, err
 	}
 
-	// 분류 개수 계산 (class1 기준)
-	classCount := len(summary.Classifications)
+	// 분류 그룹별 항목 수 계산
+	objGroups := map[string]int{}
+	objOrder := []string{}
+	for _, cl := range summary.Classifications {
+		if cl.ObjID != "" {
+			if _, exists := objGroups[cl.ObjID]; !exists {
+				objOrder = append(objOrder, cl.ObjID)
+			}
+			objGroups[cl.ObjID]++
+		}
+	}
+
+	// 각 분류 그룹의 실제 선택 개수 계산
+	classFilters := []string{opts.Class1, opts.Class2, opts.Class3, opts.Class4, opts.Class5, opts.Class6, opts.Class7, opts.Class8}
+	classCount := 1
+	for i, objID := range objOrder {
+		metaCount := objGroups[objID]
+		filterVal := ""
+		if i < len(classFilters) {
+			filterVal = classFilters[i]
+		}
+		classCount *= countFilterValues(filterVal, metaCount)
+	}
 	if classCount == 0 {
 		classCount = 1
 	}
 
-	// 항목 개수 계산
-	itemCount := len(summary.Items)
+	// 항목 개수: 실제 필터 반영
+	itemCount := countFilterValues(opts.Item, len(summary.Items))
 	if itemCount == 0 {
 		itemCount = 1
 	}
 
 	// 시점 개수 계산
-	periodCount := len(summary.Periods)
-	if periodCount == 0 {
-		periodCount = 1
+	periodCount := 1
+	// --latest가 있으면 그 값을 사용
+	if opts.NewEstPrdCnt != "" {
+		if n, err := strconv.Atoi(opts.NewEstPrdCnt); err == nil && n > 0 {
+			periodCount = n
+		}
+	} else if opts.StartPrdDe != "" && opts.EndPrdDe != "" {
+		// start~end 범위
+		startY, _ := strconv.Atoi(opts.StartPrdDe[:4])
+		endY, _ := strconv.Atoi(opts.EndPrdDe[:4])
+		if endY >= startY {
+			periodCount = endY - startY + 1
+			prd := strings.ToUpper(opts.PrdSe)
+			if prd == "M" { periodCount *= 12 }
+			if prd == "Q" { periodCount *= 4 }
+			if prd == "H" { periodCount *= 2 }
+		}
+	} else {
+		// 시점 정보 없으면 메타에서 추정
+		for _, p := range summary.Periods {
+			prdCode := strings.ToUpper(strings.TrimSpace(p.PrdSe))
+			optsPrd := strings.ToUpper(opts.PrdSe)
+			prdMatch := (optsPrd == "" || prdCode == optsPrd ||
+				(optsPrd == "Y" && (prdCode == "년" || prdCode == "Y")) ||
+				(optsPrd == "M" && (prdCode == "월" || prdCode == "M")) ||
+				(optsPrd == "Q" && (prdCode == "분기" || prdCode == "Q")) ||
+				(optsPrd == "H" && (prdCode == "반기" || prdCode == "H")))
+			if prdMatch && p.StrtPrdDe != "" && p.EndPrdDe != "" {
+				start := strings.ReplaceAll(strings.ReplaceAll(p.StrtPrdDe, ".", ""), " ", "")
+				end := strings.ReplaceAll(strings.ReplaceAll(p.EndPrdDe, ".", ""), " ", "")
+				start = strings.Split(start, "/")[0]
+				end = strings.Split(end, "/")[0]
+				startY, _ := strconv.Atoi(start[:4])
+				endY, _ := strconv.Atoi(end[:4])
+				if endY > startY {
+					periodCount = endY - startY + 1
+					if prdCode == "월" || prdCode == "M" { periodCount *= 12 }
+					if prdCode == "분기" || prdCode == "Q" { periodCount *= 4 }
+					if prdCode == "반기" || prdCode == "H" { periodCount *= 2 }
+				}
+				break
+			}
+		}
 	}
 
-	// 예상 셀 수 (출력컬럼 수를 약 10으로 추정)
-	estimatedCells := classCount * itemCount * periodCount * 10
+	// 예상 행 수 = 분류 × 항목 × 시점, 셀 수 = 행 × 컬럼(~14)
+	estimatedCells := classCount * itemCount * periodCount * 14
 
 	return estimatedCells, nil
 }
@@ -457,4 +584,65 @@ func (c *Client) splitHalfRange(start, end string, chunksNeeded int) []PeriodChu
 	}
 
 	return chunks
+}
+
+// calcLatestStart는 종료 시점에서 N개 시점 전의 시작 시점을 계산합니다.
+// --latest N 사용 시 전체 범위 대신 최근 N개 시점만 조회하기 위해 사용합니다.
+func (c *Client) calcLatestStart(end string, n int, prdSe string) string {
+	period := strings.ToUpper(prdSe)
+	if period == "" {
+		period = "Y"
+	}
+
+	switch period {
+	case "Y":
+		endYear, err := strconv.Atoi(end)
+		if err != nil {
+			return end
+		}
+		return fmt.Sprintf("%d", endYear-n+1)
+	case "M":
+		if len(end) < 6 {
+			return end
+		}
+		endYear, _ := strconv.Atoi(end[:4])
+		endMonth, _ := strconv.Atoi(end[4:6])
+		total := endYear*12 + endMonth - n + 1
+		y := total / 12
+		m := total % 12
+		if m == 0 {
+			m = 12
+			y--
+		}
+		return fmt.Sprintf("%04d%02d", y, m)
+	case "Q":
+		if len(end) < 5 {
+			return end
+		}
+		endYear, _ := strconv.Atoi(end[:4])
+		endQ, _ := strconv.Atoi(end[4:5])
+		total := endYear*4 + endQ - n + 1
+		y := total / 4
+		q := total % 4
+		if q == 0 {
+			q = 4
+			y--
+		}
+		return fmt.Sprintf("%04d%d", y, q)
+	case "H":
+		if len(end) < 5 {
+			return end
+		}
+		endYear, _ := strconv.Atoi(end[:4])
+		endH, _ := strconv.Atoi(end[4:5])
+		total := endYear*2 + endH - n + 1
+		y := total / 2
+		h := total % 2
+		if h == 0 {
+			h = 2
+			y--
+		}
+		return fmt.Sprintf("%04d%d", y, h)
+	}
+	return end
 }

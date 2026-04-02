@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -154,32 +155,32 @@ var dataCmd = &cobra.Command{
 		// 설정 로드
 		cfg, err := config.Load()
 		if err != nil {
-			fmt.Printf("오류: %v\n", err)
+			fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 			return
 		}
 
 		// API 클라이언트 생성
 		client, err := api.NewClient(cfg.APIKeys)
 		if err != nil {
-			fmt.Printf("오류: %v\n", err)
+			fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 			return
 		}
 
 		// 플래그에서 옵션 생성
 		opts := api.DataOptions{
-			Class1:       class1Flag,
-			Class2:       class2Flag,
-			Class3:       class3Flag,
-			Class4:       class4Flag,
-			Class5:       class5Flag,
-			Class6:       class6Flag,
-			Class7:       class7Flag,
-			Class8:       class8Flag,
-			Item:         itemFlag,
-			PrdSe:        periodFlag,
-			StartPrdDe:   startFlag,
-			EndPrdDe:     endFlag,
-			OutputFields: fieldsFlag,
+			Class1:     class1Flag,
+			Class2:     class2Flag,
+			Class3:     class3Flag,
+			Class4:     class4Flag,
+			Class5:     class5Flag,
+			Class6:     class6Flag,
+			Class7:     class7Flag,
+			Class8:     class8Flag,
+			Item:       itemFlag,
+			PrdSe:      periodFlag,
+			StartPrdDe: startFlag,
+			EndPrdDe:   endFlag,
+			// OutputFields는 API에 전달하지 않음 (클라이언트 사이드 필터링으로 처리)
 		}
 		if hasLatest && latestFlag > 0 {
 			opts.NewEstPrdCnt = strconv.Itoa(latestFlag)
@@ -204,50 +205,92 @@ var dataCmd = &cobra.Command{
 				MaxCells:    40000,
 				NoAutoSplit: noAutoSplitFlag,
 			}
-			results, err = client.DataWithAutoSplit(orgID, tblID, opts, splitOpts, func(current, total int) {
-				if total > 1 {
-					fmt.Printf("[%d/%d] 조회 중...\n", current, total)
+			var progressFn func(int, int)
+			if formatFlag == "table" {
+				progressFn = func(current, total int) {
+					if total > 1 {
+						fmt.Fprintf(os.Stderr, "[%d/%d] 조회 중...\n", current, total)
+					}
 				}
-			})
+			}
+			results, err = client.DataWithAutoSplit(orgID, tblID, opts, splitOpts, progressFn)
 		}
 
 		if err != nil {
-			fmt.Printf("오류: %v\n", err)
+			fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 			return
 		}
 
-		// 데이터를 map 슬라이스로 변환
-		dataMap := make([]map[string]interface{}, len(results))
-		for i, row := range results {
-			dataMap[i] = map[string]interface{}{
-				"C1_NM":  row.C1NM,
-				"C2_NM":  row.C2NM,
-				"C3_NM":  row.C3NM,
-				"C4_NM":  row.C4NM,
-				"C5_NM":  row.C5NM,
-				"C6_NM":  row.C6NM,
-				"C7_NM":  row.C7NM,
-				"C8_NM":  row.C8NM,
-				"ITM_NM": row.ItmNM,
-				"PRD_DE": row.PrdDe,
-				"DT":     row.DT,
-				"CMMT":   row.LstChn,
-				"UNIT":   row.UnitNM,
-				"PRD_SE": row.PrdSe,
+		// 메타 조회하여 실제 컬럼명 가져오기
+		var colMeta *api.ColumnMeta
+		var colMetaFull *api.ColumnMeta // 필터링 전 전체 메타 (--fields 변환용)
+		if orgID != "" && tblID != "" {
+			if summary, err := client.MetaSummary(orgID, tblID); err == nil {
+				colMetaFull = summary.BuildColumnMeta()
+				colMeta = colMetaFull
+				if len(results) > 0 {
+					colMeta = colMetaFull.FilterByData(results)
+				}
 			}
 		}
 
-		// 포맷 옵션 생성
+		// 데이터를 동적 컬럼명으로 map 슬라이스로 변환
+		dataMap := make([]map[string]interface{}, len(results))
+		for i, row := range results {
+			m := make(map[string]interface{})
+			if colMeta != nil {
+				for _, col := range colMeta.Columns {
+					m[col.Label] = row.GetField(col.Key)
+				}
+			} else {
+				// 폴백: 기존 고정 키
+				m["분류값명1"] = row.C1NM
+				m["분류값명2"] = row.C2NM
+				m["분류값명3"] = row.C3NM
+				m["분류값명4"] = row.C4NM
+				m["분류값명5"] = row.C5NM
+				m["분류값명6"] = row.C6NM
+				m["분류값명7"] = row.C7NM
+				m["분류값명8"] = row.C8NM
+				m["항목명"] = row.ItmNM
+				m["수록주기"] = row.PrdSe
+				m["수록시점"] = row.PrdDe
+				m["수치값"] = row.DT
+				m["단위"] = row.UnitNM
+				m["비고"] = row.LstChn
+			}
+			dataMap[i] = m
+		}
+
+		// 포맷 옵션 생성 - 동적 컬럼 순서 지정
 		formatOpts := output.FormatOptions{
 			Korean: true,
 		}
-
-		// --fields가 있으면 FormatOptions.Columns에 전달
-		if fieldsFlag != "" {
-			formatOpts.Columns = strings.Split(fieldsFlag, ",")
-			for i := range formatOpts.Columns {
-				formatOpts.Columns[i] = strings.TrimSpace(formatOpts.Columns[i])
+		if colMeta != nil {
+			for _, col := range colMeta.Columns {
+				formatOpts.Columns = append(formatOpts.Columns, col.Label)
 			}
+		}
+
+		// --fields가 있으면 사용자 지정 컬럼으로 덮어쓰기
+		// API 키(C1_NM, DT 등)와 한글 라벨(시도별, 수치값 등) 모두 지원
+		if fieldsFlag != "" {
+			fields := strings.Split(fieldsFlag, ",")
+			// 변환용 메타: 필터링 전 전체 메타 사용 (필터링 후에는 매핑이 빠질 수 있음)
+			lookupMeta := colMetaFull
+			if lookupMeta == nil {
+				lookupMeta = colMeta
+			}
+			for i := range fields {
+				fields[i] = strings.TrimSpace(fields[i])
+				// API 키가 입력된 경우 한글 라벨로 변환
+				if lookupMeta != nil {
+					if label := lookupMeta.GetLabel(fields[i]); label != fields[i] {
+						fields[i] = label
+					}
+				}
+			}
+			formatOpts.Columns = fields
 		}
 
 		// --output이 있으면 WriteToFile() 사용
@@ -301,14 +344,14 @@ func runDataInteractive() {
 	// 설정 로드
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Printf("오류: %v\n", err)
+		fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 		return
 	}
 
 	// API 클라이언트 생성
 	client, err := api.NewClient(cfg.APIKeys)
 	if err != nil {
-		fmt.Printf("오류: %v\n", err)
+		fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 		return
 	}
 
@@ -324,7 +367,7 @@ func runDataInteractive() {
 	searchOpts := api.SearchOptions{ResultCount: 20}
 	searchResults, err := client.Search(keyword, searchOpts)
 	if err != nil {
-		fmt.Printf("오류: %v\n", err)
+		fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 		return
 	}
 
@@ -354,7 +397,7 @@ func runDataInteractive() {
 	fmt.Print("  📋 메타 로딩 중...\n")
 	metaSummary, err := client.MetaSummary(orgID, tblID)
 	if err != nil {
-		fmt.Printf("오류: %v\n", err)
+		fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 		return
 	}
 
@@ -422,12 +465,12 @@ func runDataInteractive() {
 
 	results, err := client.DataWithAutoSplit(orgID, tblID, opts, splitOpts, func(current, total int) {
 		if total > 1 {
-			fmt.Printf("[%d/%d] 조회 중...\n", current, total)
+			fmt.Fprintf(os.Stderr, "[%d/%d] 조회 중...\n", current, total)
 		}
 	})
 
 	if err != nil {
-		fmt.Printf("오류: %v\n", err)
+		fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 		return
 	}
 
