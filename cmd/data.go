@@ -320,6 +320,7 @@ var dataCmd = &cobra.Command{
 			chartOpts := chart.Options{
 				Type:   chartType,
 				Format: chartFmt,
+				Title:  dataChartTitle,
 				Output: outputFlag,
 				Open:   dataOpenFlag,
 				XLabel: axisInfo.XLabel,
@@ -381,9 +382,10 @@ var (
 	fieldsFlag      string
 	userIDFlag      string
 	noAutoSplitFlag bool
-	dataChartFlag   string
+	dataChartFlag    string
 	dataChartFmtFlag string
-	dataOpenFlag    bool
+	dataChartTitle   string
+	dataOpenFlag     bool
 )
 
 // runDataInteractive implements interactive mode for data command.
@@ -648,6 +650,7 @@ func init() {
 	dataCmd.Flags().StringVar(&userIDFlag, "user-id", "", "자료등록 방식 (userStatsId로 조회)")
 	dataCmd.Flags().BoolVar(&noAutoSplitFlag, "no-auto-split", false, "4만 셀 초과 시 자동 분할 비활성화")
 	dataCmd.Flags().StringVar(&dataChartFlag, "chart", "", "차트 타입: line, bar, pie")
-	dataCmd.Flags().StringVar(&dataChartFmtFlag, "chart-format", "", "차트 출력 포맷: terminal(기본), png, svg, pdf, html, excel")
+	dataCmd.Flags().StringVar(&dataChartFmtFlag, "chart-format", "", "차트 출력 포맷: terminal(기본), png, svg, pdf, html, excel, mermaid")
+	dataCmd.Flags().StringVar(&dataChartTitle, "title", "", "차트 제목")
 	dataCmd.Flags().BoolVar(&dataOpenFlag, "open", false, "차트 생성 후 자동 열기")
 }

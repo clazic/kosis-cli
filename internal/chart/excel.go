@@ -92,6 +92,10 @@ func renderExcel(seriesList []Series, opts Options) error {
 		Title: []excelize.RichTextRun{
 			{Text: title},
 		},
+		Legend: excelize.ChartLegend{
+			Position:      "top",
+			ShowLegendKey: true,
+		},
 		PlotArea: excelize.ChartPlotArea{
 			ShowVal: true,
 		},

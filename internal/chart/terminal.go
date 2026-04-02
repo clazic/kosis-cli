@@ -8,6 +8,16 @@ import (
 	"github.com/guptarohit/asciigraph"
 )
 
+// ANSI colors for multi-series
+var seriesColors = []asciigraph.AnsiColor{
+	asciigraph.Red,
+	asciigraph.Green,
+	asciigraph.Yellow,
+	asciigraph.Blue,
+	asciigraph.Cyan,
+	asciigraph.White,
+}
+
 func renderTerminal(seriesList []Series, opts Options) error {
 	width := opts.Width
 	if width <= 0 {
@@ -18,45 +28,106 @@ func renderTerminal(seriesList []Series, opts Options) error {
 		height = 15
 	}
 
-	for i, s := range seriesList {
-		if len(s.Values) == 0 {
-			continue
+	// Filter out empty series
+	var validSeries []Series
+	for _, s := range seriesList {
+		if len(s.Values) > 0 {
+			validSeries = append(validSeries, s)
 		}
+	}
+	if len(validSeries) == 0 {
+		return nil
+	}
 
-		// Downsample if data is too large for terminal display
+	// Downsample if needed
+	for i, s := range validSeries {
 		if len(s.Values) > 200 {
 			fmt.Fprintf(os.Stderr, "참고: 데이터가 %d건으로 많아 200건으로 다운샘플링하여 표시합니다.\n", len(s.Values))
-			s = downsample(s, 200)
+			validSeries[i] = downsample(s, 200)
 		}
+	}
 
-		title := opts.Title
-		if title == "" && s.Name != "" {
-			title = s.Name
-		}
-		if title != "" && len(seriesList) > 1 {
-			title = fmt.Sprintf("%s - %s", opts.Title, s.Name)
-		}
+	// Single series: use Plot
+	if len(validSeries) == 1 {
+		return renderSingleSeries(validSeries[0], opts, width, height)
+	}
 
-		caption := buildCaption(s.Labels)
+	// Multiple series: use PlotMany for overlay chart
+	return renderMultiSeries(validSeries, opts, width, height)
+}
 
-		plotOpts := []asciigraph.Option{
-			asciigraph.Height(height),
-			asciigraph.Width(width),
-		}
-		if title != "" {
-			plotOpts = append(plotOpts, asciigraph.Caption(title))
-		}
+func renderSingleSeries(s Series, opts Options, width, height int) error {
+	title := opts.Title
+	if title == "" && s.Name != "" {
+		title = s.Name
+	}
 
-		graph := asciigraph.Plot(s.Values, plotOpts...)
-		fmt.Println(graph)
+	caption := buildCaption(s.Labels)
 
-		if caption != "" {
-			fmt.Println(caption)
-		}
+	// Print title at top
+	if title != "" {
+		fmt.Println()
+		fmt.Printf("  %s\n\n", title)
+	}
 
-		if i < len(seriesList)-1 {
-			fmt.Println()
+	plotOpts := []asciigraph.Option{
+		asciigraph.Height(height),
+		asciigraph.Width(width),
+	}
+
+	graph := asciigraph.Plot(s.Values, plotOpts...)
+	fmt.Println(graph)
+
+	if caption != "" {
+		fmt.Println(caption)
+	}
+	return nil
+}
+
+func renderMultiSeries(seriesList []Series, opts Options, width, height int) error {
+	// Build data for PlotMany
+	data := make([][]float64, len(seriesList))
+	for i, s := range seriesList {
+		data[i] = s.Values
+	}
+
+	// Build legend names
+	legends := make([]string, len(seriesList))
+	for i, s := range seriesList {
+		if s.Name != "" {
+			legends[i] = s.Name
+		} else {
+			legends[i] = fmt.Sprintf("시리즈 %d", i+1)
 		}
+	}
+
+	// Build color list
+	colors := make([]asciigraph.AnsiColor, len(seriesList))
+	for i := range seriesList {
+		colors[i] = seriesColors[i%len(seriesColors)]
+	}
+
+	title := opts.Title
+	caption := buildCaption(seriesList[0].Labels)
+
+	// Print title at top
+	if title != "" {
+		fmt.Println()
+		fmt.Printf("  %s\n\n", title)
+	}
+
+	plotOpts := []asciigraph.Option{
+		asciigraph.Height(height),
+		asciigraph.Width(width),
+		asciigraph.SeriesColors(colors...),
+		asciigraph.SeriesLegends(legends...),
+	}
+
+	graph := asciigraph.PlotMany(data, plotOpts...)
+	fmt.Println(graph)
+
+	if caption != "" {
+		fmt.Println(caption)
 	}
 
 	return nil

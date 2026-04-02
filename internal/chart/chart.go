@@ -28,6 +28,7 @@ const (
 	FormatPDF      ChartFormat = "pdf"
 	FormatHTML     ChartFormat = "html"
 	FormatExcel    ChartFormat = "excel"
+	FormatMermaid  ChartFormat = "mermaid"
 )
 
 // Options contains chart rendering options.
@@ -79,8 +80,10 @@ func ParseChartFormat(s string) (ChartFormat, error) {
 		return FormatHTML, nil
 	case "excel", "xlsx":
 		return FormatExcel, nil
+	case "mermaid":
+		return FormatMermaid, nil
 	default:
-		return "", fmt.Errorf("알 수 없는 차트 포맷: %s (terminal, png, svg, pdf, html, excel 중 선택)", s)
+		return "", fmt.Errorf("알 수 없는 차트 포맷: %s (terminal, png, svg, pdf, html, excel, mermaid 중 선택)", s)
 	}
 }
 
@@ -224,6 +227,8 @@ func Render(seriesList []Series, opts Options) error {
 		return renderHTML(seriesList, opts)
 	case FormatExcel:
 		return renderExcel(seriesList, opts)
+	case FormatMermaid:
+		return renderMermaid(seriesList, opts)
 	default:
 		return fmt.Errorf("지원하지 않는 차트 포맷: %s", opts.Format)
 	}
@@ -263,25 +268,32 @@ func detectClassColumns(row map[string]interface{}) []string {
 	}
 
 	// Fallback: check any Korean label columns that look like classification
+	// 시점, 수치값, 단위, 항목 등 비분류 컬럼을 제외하고 남은 문자열 컬럼이 분류
 	excluded := map[string]bool{
 		"수록시점": true, "시점": true, "수치값": true, "단위": true,
-		"항목명": true, "수록주기": true, "비고": true,
+		"항목명": true, "항목": true, "수록주기": true, "비고": true,
 		"PRD_DE": true, "DT": true, "UNIT_NM": true, "ITM_NM": true, "PRD_SE": true,
+		"LST_CHN_DE": true, "CMMT": true, "ORG_ID": true, "TBL_ID": true, "TBL_NM": true,
 	}
+	// 분류 컬럼 후보: excluded에 없는 문자열 값 컬럼 모두 수집
 	var keys []string
 	for k := range row {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	var classCols []string
 	for _, k := range keys {
 		if excluded[k] {
 			continue
 		}
 		if v, ok := row[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
-				return []string{k}
+				classCols = append(classCols, k)
 			}
 		}
+	}
+	if len(classCols) > 0 {
+		return classCols
 	}
 	return nil
 }

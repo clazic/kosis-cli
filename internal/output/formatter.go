@@ -102,6 +102,8 @@ func NewFormatter(format string) (Formatter, error) {
 		return &JSONFormatter{}, nil
 	case "csv":
 		return &CSVFormatter{}, nil
+	case "markdown", "md":
+		return &MarkdownFormatter{}, nil
 	case "xlsx":
 		return &XLSXFormatter{}, nil
 	case "sqlite":
