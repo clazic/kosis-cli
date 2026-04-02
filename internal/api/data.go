@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -45,7 +46,7 @@ func buildDataParams(orgID, tblID string, opts DataOptions) map[string]string {
 		params["itmId"] = opts.Item
 	}
 	if opts.PrdSe != "" {
-		params["prdSe"] = opts.PrdSe
+		params["prdSe"] = normalizePrdSe(opts.PrdSe)
 	}
 
 	// Add period parameters
@@ -118,12 +119,35 @@ func normalizeDataKeys(s string) string {
 		`"수록주기"`, `"PRD_SE"`,
 		`"수록시점"`, `"PRD_DE"`,
 		`"수치값"`, `"DT"`,
-		`"비고"`, `"LST_CHN_DE"`,
+		`"비고"`, `"CMMT"`,
+		`"최종수정일"`, `"LST_CHN_DE"`,
 		`"기관코드"`, `"ORG_ID"`,
 		`"통계표코드"`, `"TBL_ID"`,
 		`"통계표명"`, `"TBL_NM"`,
 	)
 	return replacer.Replace(s)
+}
+
+// normalizePrdSe converts Korean/user-friendly period codes to KOSIS API codes.
+// 메타 API는 한글(년, 월, 분기, 반기, 5년 등)로 반환하지만, 데이터 API는 영문 코드를 요구합니다.
+func normalizePrdSe(prdSe string) string {
+	switch strings.TrimSpace(prdSe) {
+	case "년", "연", "Y", "y":
+		return "Y"
+	case "월", "M", "m":
+		return "M"
+	case "분기", "Q", "q":
+		return "Q"
+	case "반기", "H", "h":
+		return "H"
+	case "5년", "F", "f":
+		return "F"
+	case "A":
+		// 일부 통계표에서 PRD_SE가 "A"로 반환되지만, 실제 API 코드는 다를 수 있음
+		return "Y"
+	default:
+		return prdSe
+	}
 }
 
 // DataWithPeriods handles non-continuous periods by making multiple requests.
@@ -147,7 +171,12 @@ func (c *Client) DataWithPeriods(orgID, tblID string, periods []string, opts Dat
 
 		results, err := c.Data(orgID, tblID, optsCopy)
 		if err != nil {
-			return nil, fmt.Errorf("기간 %s 조회 실패: %w", period, err)
+			// API 오류 30: 해당 시점에 데이터가 없음 → 건너뛰고 계속 진행
+			if strings.Contains(err.Error(), "API 오류 [30]") {
+				fmt.Fprintf(os.Stderr, "참고: 시점 %s에 데이터가 없어 건너뜁니다.\n", period)
+				continue
+			}
+			return allResults, fmt.Errorf("기간 %s 조회 실패: %w", period, err)
 		}
 
 		allResults = append(allResults, results...)

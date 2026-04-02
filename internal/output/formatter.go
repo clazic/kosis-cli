@@ -26,7 +26,13 @@ type FormatOptions struct {
 	MaxRows int
 
 	// Writer is the output destination. Defaults to os.Stdout if not specified.
+	// Used by stream-based formatters (csv, json, table).
 	Writer io.Writer
+
+	// FilePath is the output file path for formatters that manage their own file I/O
+	// (xlsx, sqlite, parquet). These formatters open the file themselves and should
+	// not share a file handle with the caller.
+	FilePath string
 }
 
 // StandardColumnOrder defines the standard column order for consistent output.

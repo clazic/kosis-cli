@@ -25,15 +25,28 @@ func DetectAITool() string {
 	return ""
 }
 
+// shellEscape는 문자열을 작은따옴표로 감싸 셸 인젝션을 방지합니다.
+// 작은따옴표 내부의 작은따옴표는 '\'' 패턴으로 이스케이프합니다.
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 // GenerateCommand는 AI 도구를 사용하여 자연어를 kosis 명령어로 변환합니다.
 func GenerateCommand(toolName, toolCmd, userRequest, skillContent string) (*AIResult, error) {
 	// 1. 프롬프트 구성
 	prompt := buildPrompt(userRequest, skillContent)
 
-	// 2. 도구 명령어에 프롬프트 삽입
+	// 2. 도구 명령어에 프롬프트 삽입 (셸 이스케이프 적용)
 	//    toolCmd 예: "claude -p '{prompt}'"
-	//    → {prompt}를 실제 프롬프트로 치환
-	fullCmd := strings.ReplaceAll(toolCmd, "{prompt}", prompt)
+	//    → {prompt}를 셸 이스케이프된 프롬프트로 치환
+	//    기존 따옴표로 감싸진 '{prompt}' 패턴을 이스케이프된 값으로 교체
+	escapedPrompt := shellEscape(prompt)
+	// '{prompt}' (따옴표 포함) 패턴이 있으면 통째로 교체
+	fullCmd := strings.ReplaceAll(toolCmd, "'{prompt}'", escapedPrompt)
+	// "{prompt}" (쌍따옴표 포함) 패턴이 있으면 통째로 교체
+	fullCmd = strings.ReplaceAll(fullCmd, "\"{prompt}\"", escapedPrompt)
+	// 따옴표 없는 {prompt} 패턴이 남아있으면 이스케이프된 값으로 교체
+	fullCmd = strings.ReplaceAll(fullCmd, "{prompt}", escapedPrompt)
 
 	// 3. exec.Command로 실행
 	//    셸을 통해 실행 (파이프 등 지원)

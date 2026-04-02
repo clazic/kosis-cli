@@ -3,8 +3,10 @@ package api
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // SplitOptions 분할 조회 옵션
@@ -35,11 +37,22 @@ func (c *Client) DataWithAutoSplit(orgID, tblID string, opts DataOptions, splitO
 
 	// 1. Meta API로 예상 셀 수 계산
 	summary, summaryErr := c.MetaSummary(orgID, tblID)
-	estimatedCells, err := c.estimateCellCount(orgID, tblID, opts)
-	if err != nil || summaryErr != nil {
-		// Meta 조회 실패 시 일반 조회 시도 (meta API가 없을 수 있음)
-		return c.Data(orgID, tblID, opts)
+	if summaryErr != nil {
+		// Meta 조회 실패 시: start/end가 있으면 보수적으로 5개 청크로 분할 시도
+		if opts.StartPrdDe != "" && opts.EndPrdDe != "" {
+			conservativeChunks := c.splitByPeriod(opts, splitOpts.MaxCells*5+1, splitOpts.MaxCells)
+			if len(conservativeChunks) > 0 {
+				fmt.Fprintf(os.Stderr, "⚠ 메타 조회 실패로 보수적 분할(%d 청크)을 시도합니다.\n", len(conservativeChunks))
+				if len(c.apiKeys) <= 1 {
+					return c.dataWithAutoSplitSequential(orgID, tblID, opts, conservativeChunks, progressFn)
+				}
+				return c.dataWithAutoSplitParallel(orgID, tblID, opts, conservativeChunks, progressFn)
+			}
+		}
+		// start/end도 없으면 안내 메시지와 함께 에러 반환
+		return nil, fmt.Errorf("메타 정보 조회에 실패했습니다. --start, --end로 시점 범위를 지정하거나 --latest로 최근 N개만 조회하세요: %w", summaryErr)
 	}
+	estimatedCells := estimateCellCountFromSummary(summary, opts)
 
 	// 2. 4만 이하면 일반 조회
 	if estimatedCells <= splitOpts.MaxCells {
@@ -100,7 +113,12 @@ func (c *Client) DataWithAutoSplit(orgID, tblID string, opts DataOptions, splitO
 	// 시점 축으로 분할
 	chunks := c.splitByPeriod(opts, estimatedCells, splitOpts.MaxCells)
 	if len(chunks) == 0 {
-		// 시점 분할이 불가능하면 일반 조회
+		// 시점 분할이 불가능하고 예상 셀이 제한 초과이면 에러 반환
+		if estimatedCells > splitOpts.MaxCells {
+			return nil, fmt.Errorf("예상 셀 수(%d)가 %d셀 제한을 초과하지만 시점 축 분할이 불가능합니다. "+
+				"분류값(--class1 등)을 좁히거나 --item으로 항목을 지정하여 조회 범위를 축소하세요", estimatedCells, splitOpts.MaxCells)
+		}
+		// 제한 이하이면 일반 조회
 		return c.Data(orgID, tblID, opts)
 	}
 
@@ -133,11 +151,15 @@ func (c *Client) dataWithAutoSplitSequential(orgID, tblID string, opts DataOptio
 			if strings.Contains(err.Error(), "API 오류 [30]") {
 				continue
 			}
-			return nil, fmt.Errorf("분할 조회 [%s~%s] 실패: %w", chunk.Start, chunk.End, err)
+			return allResults, fmt.Errorf("분할 조회 [%s~%s] 실패: %w", chunk.Start, chunk.End, err)
 		}
 
 		allResults = append(allResults, results...)
 	}
+
+	// 정렬 및 중복 제거
+	sortByPeriod(allResults)
+	allResults = deduplicateRows(allResults)
 
 	return allResults, nil
 }
@@ -160,7 +182,7 @@ func (c *Client) dataWithAutoSplitParallel(orgID, tblID string, opts DataOptions
 	results := make(chan chunkResult, len(chunks))
 	sem := make(chan struct{}, numWorkers)
 
-	// 각 청크를 워커에 분배하여 병렬 실행
+	// 각 청크를 워커에 분배하여 병렬 실행 (429 에러 시 최대 3회 지수 백오프 재시도)
 	for i, chunk := range chunks {
 		sem <- struct{}{} // 동시성 제한 획득
 		go func(idx int, chk PeriodChunk, keyIdx int) {
@@ -171,8 +193,21 @@ func (c *Client) dataWithAutoSplitParallel(orgID, tblID string, opts DataOptions
 			chunkOpts.StartPrdDe = chk.Start
 			chunkOpts.EndPrdDe = chk.End
 
-			// 특정 API 키를 사용하여 요청
-			data, err := c.dataWithSpecificKey(orgID, tblID, chunkOpts, keyIdx)
+			// 특정 API 키를 사용하여 요청 (429 시 최대 3회 재시도)
+			const maxRetries = 3
+			var data []DataRow
+			var err error
+			for attempt := 0; attempt <= maxRetries; attempt++ {
+				data, err = c.dataWithSpecificKey(orgID, tblID, chunkOpts, keyIdx)
+				if err == nil || !strings.Contains(err.Error(), "429") {
+					break
+				}
+				if attempt < maxRetries {
+					// 지수 백오프: 1s, 2s, 4s
+					backoff := time.Duration(1<<uint(attempt)) * time.Second
+					time.Sleep(backoff)
+				}
+			}
 			results <- chunkResult{Index: idx, Data: data, Err: err}
 		}(i, chunk, i%numWorkers)
 	}
@@ -218,6 +253,10 @@ func (c *Client) dataWithAutoSplitParallel(orgID, tblID string, opts DataOptions
 		merged = append(merged, r.Data...)
 	}
 
+	// 정렬 및 중복 제거
+	sortByPeriod(merged)
+	merged = deduplicateRows(merged)
+
 	return merged, nil
 }
 
@@ -232,8 +271,8 @@ func countFilterValues(filterVal string, metaCount int) int {
 		return metaCount
 	}
 	if strings.HasSuffix(filterVal, "*") {
-		// 하위 전체 선택: 전체의 1/4로 추정
-		est := metaCount / 4
+		// 하위 전체 선택: 전체의 1/2로 추정 (과소추정 방지를 위해 보수적으로 계산)
+		est := metaCount / 2
 		if est < 1 {
 			est = 1
 		}
@@ -243,14 +282,9 @@ func countFilterValues(filterVal string, metaCount int) int {
 	return len(strings.Split(filterVal, "+"))
 }
 
-// estimateCellCount meta 정보로 예상 셀 수 계산
-// 쿼리 옵션의 실제 필터값을 반영하여 계산합니다.
-func (c *Client) estimateCellCount(orgID, tblID string, opts DataOptions) (int, error) {
-	summary, err := c.MetaSummary(orgID, tblID)
-	if err != nil {
-		return 0, err
-	}
-
+// estimateCellCountFromSummary는 이미 조회된 MetaSummaryResult를 사용하여 예상 셀 수를 계산합니다.
+// MetaSummary를 중복 호출하지 않도록 리팩토링된 함수입니다.
+func estimateCellCountFromSummary(summary *MetaSummaryResult, opts DataOptions) int {
 	// 분류 그룹별 항목 수 계산
 	objGroups := map[string]int{}
 	objOrder := []string{}
@@ -292,15 +326,17 @@ func (c *Client) estimateCellCount(orgID, tblID string, opts DataOptions) (int, 
 			periodCount = n
 		}
 	} else if opts.StartPrdDe != "" && opts.EndPrdDe != "" {
-		// start~end 범위
-		startY, _ := strconv.Atoi(opts.StartPrdDe[:4])
-		endY, _ := strconv.Atoi(opts.EndPrdDe[:4])
-		if endY >= startY {
-			periodCount = endY - startY + 1
-			prd := strings.ToUpper(opts.PrdSe)
-			if prd == "M" { periodCount *= 12 }
-			if prd == "Q" { periodCount *= 4 }
-			if prd == "H" { periodCount *= 2 }
+		// start~end 범위 (문자열이 4자 미만이면 연도 파싱 불가하므로 기본값 유지)
+		if len(opts.StartPrdDe) >= 4 && len(opts.EndPrdDe) >= 4 {
+			startY, _ := strconv.Atoi(opts.StartPrdDe[:4])
+			endY, _ := strconv.Atoi(opts.EndPrdDe[:4])
+			if endY >= startY {
+				periodCount = endY - startY + 1
+				prd := strings.ToUpper(opts.PrdSe)
+				if prd == "M" { periodCount *= 12 }
+				if prd == "Q" { periodCount *= 4 }
+				if prd == "H" { periodCount *= 2 }
+			}
 		}
 	} else {
 		// 시점 정보 없으면 메타에서 추정
@@ -317,6 +353,10 @@ func (c *Client) estimateCellCount(orgID, tblID string, opts DataOptions) (int, 
 				end := strings.ReplaceAll(strings.ReplaceAll(p.EndPrdDe, ".", ""), " ", "")
 				start = strings.Split(start, "/")[0]
 				end = strings.Split(end, "/")[0]
+				// 문자열이 4자 미만이면 연도 파싱 불가하므로 건너뜀
+				if len(start) < 4 || len(end) < 4 {
+					break
+				}
 				startY, _ := strconv.Atoi(start[:4])
 				endY, _ := strconv.Atoi(end[:4])
 				if endY > startY {
@@ -333,7 +373,7 @@ func (c *Client) estimateCellCount(orgID, tblID string, opts DataOptions) (int, 
 	// 예상 행 수 = 분류 × 항목 × 시점, 셀 수 = 행 × 컬럼(~14)
 	estimatedCells := classCount * itemCount * periodCount * 14
 
-	return estimatedCells, nil
+	return estimatedCells
 }
 
 // splitByPeriod 시점 축으로 분할
@@ -645,4 +685,27 @@ func (c *Client) calcLatestStart(end string, n int, prdSe string) string {
 		return fmt.Sprintf("%04d%d", y, h)
 	}
 	return end
+}
+
+// sortByPeriod PRD_DE(시점) 기준으로 오름차순 정렬
+func sortByPeriod(rows []DataRow) {
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].PrdDe < rows[j].PrdDe
+	})
+}
+
+// deduplicateRows 중복 행 제거 (C1~C8 + ITM_ID + PRD_DE 조합 기준)
+func deduplicateRows(rows []DataRow) []DataRow {
+	seen := make(map[string]bool, len(rows))
+	result := make([]DataRow, 0, len(rows))
+	for _, row := range rows {
+		key := row.C1 + "|" + row.C2 + "|" + row.C3 + "|" + row.C4 + "|" +
+			row.C5 + "|" + row.C6 + "|" + row.C7 + "|" + row.C8 + "|" +
+			row.ItmID + "|" + row.PrdDe
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, row)
+		}
+	}
+	return result
 }

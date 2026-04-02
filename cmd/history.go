@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -132,9 +134,12 @@ ID는 history 명령어로 확인할 수 있습니다.
 		// 명령어 문자열을 cobra 명령어로 변환하여 실행
 		cmdParts := strings.Fields(entry.Command)
 
-		// rootCmd를 통해 재실행
-		rootCmd.SetArgs(cmdParts)
-		if err := rootCmd.Execute(); err != nil {
+		// 새 프로세스로 재실행하여 cobra 상태 오염 방지
+		replayCmd := exec.Command(os.Args[0], cmdParts...)
+		replayCmd.Stdin = os.Stdin
+		replayCmd.Stdout = os.Stdout
+		replayCmd.Stderr = os.Stderr
+		if err := replayCmd.Run(); err != nil {
 			fmt.Printf("명령어 실행 실패: %v\n", err)
 		}
 	},

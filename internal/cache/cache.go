@@ -42,8 +42,8 @@ func (c *Cache) cacheKeyToFilePath(key string) string {
 // Get은 캐시에서 데이터를 조회합니다.
 // 만료되었으면 false를 반환하고, 자동으로 만료된 파일을 삭제합니다.
 func (c *Cache) Get(key string) ([]byte, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	filePath := c.cacheKeyToFilePath(key)
 
@@ -56,8 +56,8 @@ func (c *Cache) Get(key string) ([]byte, bool) {
 	// 파일 수정 시간 확인 (ModTime으로 만료 판단)
 	modTime := info.ModTime()
 	if time.Since(modTime) > c.ttl {
-		// 만료된 캐시는 백그라운드에서 삭제 (에러는 무시)
-		go os.Remove(filePath)
+		// 만료된 캐시는 동기적으로 삭제 (에러는 무시)
+		os.Remove(filePath)
 		return nil, false
 	}
 

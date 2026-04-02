@@ -221,6 +221,7 @@ type StatList struct {
 
 // ExplainResult represents explanation data from statisticsExplData API.
 type ExplainResult struct {
+	OrgID        string `json:"orgId"`
 	StatsNM      string `json:"statsNm"`
 	WritingPurps string `json:"writingPurps"`
 	StatsPeriod  string `json:"statsPeriod"`

@@ -17,15 +17,14 @@ type SQLiteFormatter struct {
 }
 
 // Format formats the data as SQLite and writes it to a database file.
-// opts.Writer must be an *os.File for this formatter.
+// opts.FilePath must be set for this formatter.
 func (sf *SQLiteFormatter) Format(data []map[string]interface{}, opts FormatOptions) error {
-	// Validate that Writer is an *os.File
-	file, ok := opts.Writer.(*os.File)
-	if !ok {
-		return fmt.Errorf("SQLite 포맷터는 파일 기반 출력만 지원합니다")
+	// Validate that FilePath is set
+	if opts.FilePath == "" {
+		return fmt.Errorf("SQLite 포맷터는 파일 경로(FilePath)가 필요합니다")
 	}
 
-	dbPath := file.Name()
+	dbPath := opts.FilePath
 
 	// Open or create database
 	db, err := sql.Open("sqlite3", dbPath)
@@ -104,7 +103,7 @@ func (sf *SQLiteFormatter) Format(data []map[string]interface{}, opts FormatOpti
 func createTable(db *sql.DB, tableName string, data []map[string]interface{}, columns []string) error {
 	// Check if table exists
 	var count int
-	err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='%s'", tableName)).Scan(&count)
+	err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", tableName).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("테이블 존재 여부 확인 실패: %w", err)
 	}
@@ -115,12 +114,12 @@ func createTable(db *sql.DB, tableName string, data []map[string]interface{}, co
 	}
 
 	// Build CREATE TABLE statement
-	createStmt := fmt.Sprintf("CREATE TABLE %s (", tableName)
+	createStmt := fmt.Sprintf("CREATE TABLE %s (", quoteIdentifier(tableName))
 	colDefs := make([]string, len(columns))
 
 	for i, col := range columns {
 		colType := inferColumnType(data, col)
-		colDefs[i] = fmt.Sprintf("%s %s", col, colType)
+		colDefs[i] = fmt.Sprintf("%s %s", quoteIdentifier(col), colType)
 	}
 
 	createStmt += strings.Join(colDefs, ", ") + ")"
@@ -157,20 +156,29 @@ func inferColumnType(data []map[string]interface{}, col string) string {
 
 // insertData inserts data rows into the table
 func insertData(db *sql.DB, tableName string, data []map[string]interface{}, columns []string) error {
-	// Build INSERT statement template
+	// Build INSERT statement template with backtick-quoted identifiers
 	placeholders := make([]string, len(columns))
-	for i := range columns {
+	quotedColumns := make([]string, len(columns))
+	for i, col := range columns {
 		placeholders[i] = "?"
+		quotedColumns[i] = quoteIdentifier(col)
 	}
 
 	insertStmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		tableName,
-		strings.Join(columns, ", "),
+		quoteIdentifier(tableName),
+		strings.Join(quotedColumns, ", "),
 		strings.Join(placeholders, ", "),
 	)
 
-	stmt, err := db.Prepare(insertStmt)
+	// Use transaction for batch insert performance and atomicity
+	tx, err := db.Begin()
 	if err != nil {
+		return fmt.Errorf("트랜잭션 시작 실패: %w", err)
+	}
+
+	stmt, err := tx.Prepare(insertStmt)
+	if err != nil {
+		tx.Rollback()
 		return fmt.Errorf("INSERT 문 준비 실패: %w", err)
 	}
 	defer stmt.Close()
@@ -182,8 +190,13 @@ func insertData(db *sql.DB, tableName string, data []map[string]interface{}, col
 		}
 
 		if _, err := stmt.Exec(values...); err != nil {
+			tx.Rollback()
 			return fmt.Errorf("INSERT 실행 실패: %w", err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("트랜잭션 커밋 실패: %w", err)
 	}
 
 	return nil
@@ -191,14 +204,16 @@ func insertData(db *sql.DB, tableName string, data []map[string]interface{}, col
 
 // createIndex creates an index on a column
 func createIndex(db *sql.DB, tableName, columnName string) error {
-	indexName := fmt.Sprintf("idx_%s_%s", tableName, columnName)
+	sanitizedTableName := sanitizeIdentifier(tableName)
+	sanitizedColumnName := sanitizeIdentifier(columnName)
+	indexName := fmt.Sprintf("idx_%s_%s", sanitizedTableName, sanitizedColumnName)
 	// Limit index name length for SQLite
 	if len(indexName) > 64 {
 		indexName = indexName[:64]
 	}
 
 	createIndexStmt := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s(%s)",
-		indexName, tableName, columnName)
+		quoteIdentifier(indexName), quoteIdentifier(tableName), quoteIdentifier(columnName))
 
 	if _, err := db.Exec(createIndexStmt); err != nil {
 		return fmt.Errorf("인덱스 생성 실패: %w", err)
@@ -226,7 +241,7 @@ func updateMetaTable(db *sql.DB, tableName string) error {
 
 	// Count rows in the data table
 	var rowCount int
-	err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&rowCount)
+	err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(tableName))).Scan(&rowCount)
 	if err != nil {
 		return fmt.Errorf("행 수 계산 실패: %w", err)
 	}
@@ -246,8 +261,8 @@ func updateMetaTable(db *sql.DB, tableName string) error {
 	return nil
 }
 
-// sanitizeTableName sanitizes a table name for SQLite
-func sanitizeTableName(name string) string {
+// sanitizeIdentifier sanitizes a SQL identifier (table name or column name) for SQLite
+func sanitizeIdentifier(name string) string {
 	// Replace invalid characters with underscore
 	replacer := strings.NewReplacer(
 		"-", "_",
@@ -257,8 +272,14 @@ func sanitizeTableName(name string) string {
 		" ", "_",
 		"\t", "_",
 		"\n", "_",
+		"'", "",
+		";", "",
+		"`", "",
 	)
 	sanitized := replacer.Replace(name)
+
+	// Remove SQL comment sequences
+	sanitized = strings.ReplaceAll(sanitized, "--", "")
 
 	// Remove leading digits if any (SQLite identifiers shouldn't start with digit)
 	if len(sanitized) > 0 && sanitized[0] >= '0' && sanitized[0] <= '9' {
@@ -266,6 +287,16 @@ func sanitizeTableName(name string) string {
 	}
 
 	return sanitized
+}
+
+// sanitizeTableName sanitizes a table name for SQLite
+func sanitizeTableName(name string) string {
+	return sanitizeIdentifier(name)
+}
+
+// quoteIdentifier wraps an identifier with backticks for safe use in SQL
+func quoteIdentifier(name string) string {
+	return "`" + sanitizeIdentifier(name) + "`"
 }
 
 // hasColumn checks if a column exists in the columns list

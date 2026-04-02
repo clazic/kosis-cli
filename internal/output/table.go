@@ -5,8 +5,8 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 )
 
@@ -91,14 +91,14 @@ func calculateColumnWidths(columns []string, data []map[string]interface{}, head
 
 	// Start with header widths
 	for i, h := range headers {
-		widths[i] = utf8.RuneCountInString(h)
+		widths[i] = runewidth.StringWidth(h)
 	}
 
 	// Adjust based on data
 	for _, row := range data {
 		for i, col := range columns {
 			val := formatValue(row[col])
-			strLen := utf8.RuneCountInString(val)
+			strLen := runewidth.StringWidth(val)
 			if strLen > widths[i] {
 				widths[i] = strLen
 			}
@@ -165,7 +165,7 @@ func printTableRow(w io.Writer, columns []string, row map[string]interface{}, wi
 	for i, col := range columns {
 		val := formatValue(row[col])
 		// Truncate if too long
-		if utf8.RuneCountInString(val) > widths[i] {
+		if runewidth.StringWidth(val) > widths[i] {
 			val = truncateString(val, widths[i]-2) + ".."
 		}
 		padded := padRight(val, widths[i])
@@ -222,18 +222,14 @@ func printTableSeparator(w io.Writer, widths []int, withUnicode bool, position s
 
 // padRight pads a string to the right with spaces.
 func padRight(s string, width int) string {
-	strLen := utf8.RuneCountInString(s)
+	strLen := runewidth.StringWidth(s)
 	if strLen >= width {
 		return s
 	}
 	return s + strings.Repeat(" ", width-strLen)
 }
 
-// truncateString truncates a string to the specified length.
-func truncateString(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen])
+// truncateString truncates a string to the specified display width.
+func truncateString(s string, maxWidth int) string {
+	return runewidth.Truncate(s, maxWidth, "")
 }

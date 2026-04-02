@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -32,9 +33,14 @@ func (c *Client) Meta(orgID, tblID string, opts MetaOptions) ([]MetaResult, erro
 	// 예: {OBJ_ID:"ITEM"} → {"OBJ_ID":"ITEM"}
 	bodyStr := strings.TrimSpace(string(body))
 	if len(bodyStr) > 0 {
-		// 따옴표 없는 키를 표준 JSON 키로 변환
-		re := regexp.MustCompile(`([{,])\s*([A-Za-z_][A-Za-z0-9_]*)\s*:`)
-		bodyStr = re.ReplaceAllString(bodyStr, `$1"$2":`)
+		// 먼저 표준 JSON 파싱을 시도하고, 실패할 때만 regex 폴백 사용
+		// 이렇게 하면 정상 JSON 내 문자열 값에서 regex가 잘못 매칭하는 것을 방지
+		var jsonCheck json.RawMessage
+		if json.Unmarshal([]byte(bodyStr), &jsonCheck) != nil {
+			// 표준 JSON이 아닌 경우에만 따옴표 없는 키를 표준 JSON 키로 변환
+			re := regexp.MustCompile(`([{,])\s*([A-Za-z_][A-Za-z0-9_]*)\s*:`)
+			bodyStr = re.ReplaceAllString(bodyStr, `$1"$2":`)
+		}
 		body = []byte(bodyStr)
 	}
 
@@ -79,8 +85,8 @@ func (c *Client) MetaSummary(orgID, tblID string) (*MetaSummaryResult, error) {
 	}
 
 	// ITM 타입: 분류(Classification)와 항목(Item) 정보
-	itmResults, err := c.Meta(orgID, tblID, MetaOptions{Type: "ITM"})
-	if err == nil {
+	itmResults, itmErr := c.Meta(orgID, tblID, MetaOptions{Type: "ITM"})
+	if itmErr == nil {
 		for _, r := range itmResults {
 			if r.ObjID == "ITEM" {
 				summary.Items = append(summary.Items, r)
@@ -91,9 +97,22 @@ func (c *Client) MetaSummary(orgID, tblID string) (*MetaSummaryResult, error) {
 	}
 
 	// PRD 타입: 수록정보 (주기, 기간)
-	prdResults, err := c.Meta(orgID, tblID, MetaOptions{Type: "PRD"})
-	if err == nil {
+	prdResults, prdErr := c.Meta(orgID, tblID, MetaOptions{Type: "PRD"})
+	if prdErr == nil {
 		summary.Periods = prdResults
+	}
+
+	// 모든 서브 쿼리가 실패하면 에러 반환
+	if itmErr != nil && prdErr != nil {
+		return nil, fmt.Errorf("메타 조회 실패: ITM=%v, PRD=%v", itmErr, prdErr)
+	}
+
+	// 일부만 실패하면 경고 로그 후 부분 결과 반환
+	if itmErr != nil {
+		fmt.Fprintf(os.Stderr, "경고: ITM 메타 조회 실패 (분류/항목 정보 누락): %v\n", itmErr)
+	}
+	if prdErr != nil {
+		fmt.Fprintf(os.Stderr, "경고: PRD 메타 조회 실패 (수록정보 누락): %v\n", prdErr)
 	}
 
 	return summary, nil

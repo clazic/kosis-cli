@@ -2,7 +2,6 @@ package output
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"strconv"
 
@@ -18,13 +17,12 @@ type ParquetFormatter struct {
 }
 
 // Format formats the data as Parquet and writes it to a file.
-// opts.Writer must be an *os.File for this formatter.
+// opts.FilePath must be set for this formatter.
 // Implements column-based compression, DOUBLE for DT column, and metadata with table name/parameters.
 func (pf *ParquetFormatter) Format(data []map[string]interface{}, opts FormatOptions) error {
-	// Validate that Writer is an *os.File
-	file, ok := opts.Writer.(*os.File)
-	if !ok {
-		return fmt.Errorf("parquet 포맷터는 파일 기반 출력만 지원합니다")
+	// Validate that FilePath is set
+	if opts.FilePath == "" {
+		return fmt.Errorf("parquet 포맷터는 파일 경로(FilePath)가 필요합니다")
 	}
 
 	if len(data) == 0 {
@@ -42,7 +40,7 @@ func (pf *ParquetFormatter) Format(data []map[string]interface{}, opts FormatOpt
 	}
 
 	// Write parquet with metadata support
-	return writeParquetWithMetadata(file.Name(), data[:rowsToWrite], columns, pf.TableName, pf.Parameters)
+	return writeParquetWithMetadata(opts.FilePath, data[:rowsToWrite], columns, pf.TableName, pf.Parameters)
 }
 
 // FlatRecord represents a flexible parquet record with optional fields.

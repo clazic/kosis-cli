@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // CSVFormatter formats data as CSV with UTF-8 BOM for Excel compatibility.
@@ -49,7 +50,7 @@ func (cf *CSVFormatter) Format(data []map[string]interface{}, opts FormatOptions
 	for i := 0; i < rowsToWrite; i++ {
 		row := make([]string, len(columns))
 		for j, col := range columns {
-			row[j] = formatValue(data[i][col])
+			row[j] = sanitizeCSVValue(formatValue(data[i][col]))
 		}
 		if err := w.Write(row); err != nil {
 			return fmt.Errorf("failed to write CSV row %d: %w", i+1, err)
@@ -62,4 +63,18 @@ func (cf *CSVFormatter) Format(data []map[string]interface{}, opts FormatOptions
 	}
 
 	return nil
+}
+
+// sanitizeCSVValue prevents CSV injection by prefixing values that start with
+// formula-triggering characters (=, +, -, @, \t, \r) with a single quote.
+// This prevents formula injection when CSV files are opened in Excel.
+func sanitizeCSVValue(s string) string {
+	if s == "" {
+		return s
+	}
+	if strings.HasPrefix(s, "=") || strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") ||
+		strings.HasPrefix(s, "@") || strings.HasPrefix(s, "\t") || strings.HasPrefix(s, "\r") {
+		return "'" + s
+	}
+	return s
 }

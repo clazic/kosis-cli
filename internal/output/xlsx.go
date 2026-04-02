@@ -2,7 +2,6 @@ package output
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/xuri/excelize/v2"
@@ -12,20 +11,17 @@ import (
 type XLSXFormatter struct{}
 
 // Format formats the data as XLSX and writes it to a file.
-// opts.Writer must be an *os.File for this formatter.
+// opts.FilePath must be set for this formatter.
 func (xf *XLSXFormatter) Format(data []map[string]interface{}, opts FormatOptions) error {
-	// Validate that Writer is an *os.File
-	file, ok := opts.Writer.(*os.File)
-	if !ok {
-		return fmt.Errorf("XLSX 포맷터는 파일 기반 출력만 지원합니다")
+	// Validate that FilePath is set
+	if opts.FilePath == "" {
+		return fmt.Errorf("XLSX 포맷터는 파일 경로(FilePath)가 필요합니다")
 	}
+	filePath := opts.FilePath
 
 	// Create a new workbook
 	wb := excelize.NewFile()
 	defer wb.Close()
-
-	// Remove default sheet
-	wb.DeleteSheet("Sheet1")
 
 	// Create new sheet with default name
 	sheetName := "KOSIS Data"
@@ -33,10 +29,13 @@ func (xf *XLSXFormatter) Format(data []map[string]interface{}, opts FormatOption
 		return fmt.Errorf("시트 생성 실패: %w", err)
 	}
 
+	// Remove default sheet (must be after creating new sheet to avoid empty workbook)
+	wb.DeleteSheet("Sheet1")
+
 	columns := getColumns(data, opts)
 	if len(columns) == 0 {
 		// Empty data, just save the file
-		return wb.SaveAs(file.Name())
+		return wb.SaveAs(filePath)
 	}
 
 	// Write header row
@@ -65,7 +64,8 @@ func (xf *XLSXFormatter) Format(data []map[string]interface{}, opts FormatOption
 	}
 
 	for i, header := range headers {
-		cell := fmt.Sprintf("%s1", string(rune('A'+i)))
+		colName, _ := excelize.ColumnNumberToName(i + 1)
+		cell := fmt.Sprintf("%s1", colName)
 		if err := wb.SetCellValue(sheetName, cell, header); err != nil {
 			return fmt.Errorf("헤더 셀 설정 실패: %w", err)
 		}
@@ -91,7 +91,8 @@ func (xf *XLSXFormatter) Format(data []map[string]interface{}, opts FormatOption
 
 	for i := 0; i < rowsToWrite; i++ {
 		for j, col := range columns {
-			cellRef := fmt.Sprintf("%s%d", string(rune('A'+j)), i+2)
+			colName, _ := excelize.ColumnNumberToName(j + 1)
+			cellRef := fmt.Sprintf("%s%d", colName, i+2)
 			value := data[i][col]
 
 			// Try to parse as number for DT column
@@ -126,14 +127,14 @@ func (xf *XLSXFormatter) Format(data []map[string]interface{}, opts FormatOption
 
 	// Auto-adjust column widths
 	for i := range columns {
-		col := string(rune('A' + i))
+		col, _ := excelize.ColumnNumberToName(i + 1)
 		if err := wb.SetColWidth(sheetName, col, col, 15); err != nil {
 			return fmt.Errorf("컬럼 폭 조정 실패: %w", err)
 		}
 	}
 
 	// Save the file
-	if err := wb.SaveAs(file.Name()); err != nil {
+	if err := wb.SaveAs(filePath); err != nil {
 		return fmt.Errorf("파일 저장 실패: %w", err)
 	}
 

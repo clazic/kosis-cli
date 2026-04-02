@@ -13,8 +13,12 @@ func (c *Client) List(opts ListOptions) ([]StatList, error) {
 	if opts.VwCd != "" {
 		params["vwCd"] = opts.VwCd
 	}
+	// parentListId는 MT_ZTITLE(주제별)에서만 의미가 있음.
+	// 다른 뷰(MT_OTITLE 등)에서는 parentListId를 보내면 에러 30 발생.
 	if opts.ParentID != "" {
-		params["parentListId"] = opts.ParentID
+		if opts.VwCd == "" || opts.VwCd == "MT_ZTITLE" {
+			params["parentListId"] = opts.ParentID
+		}
 	}
 
 	body, err := c.request("statisticsList.do?method=getList", params, false)

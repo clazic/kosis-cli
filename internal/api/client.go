@@ -139,10 +139,10 @@ func (c *Client) requestWithKey(endpoint string, params map[string]string, noCac
 		if err != nil {
 			return nil, fmt.Errorf("API request failed: %w", err)
 		}
-		defer resp.Body.Close()
 
 		// Read response body
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close() // 루프 내에서 명시적으로 닫음 (defer는 함수 종료 시에만 실행되므로 루프 내 리소스 누수 방지)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read response: %w", err)
 		}
@@ -161,7 +161,7 @@ func (c *Client) requestWithKey(endpoint string, params map[string]string, noCac
 
 		// Check HTTP status code
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, maskAPIKey(string(body)))
 		}
 
 		// Check for API error response (err field)
@@ -192,6 +192,33 @@ func convertParamsToURLValues(params map[string]string) map[string][]string {
 	result := make(map[string][]string)
 	for k, v := range params {
 		result[k] = []string{v}
+	}
+	return result
+}
+
+// maskAPIKey masks any API key that appears in the given string.
+// Replaces patterns like apiKey=XXXX with apiKey=XX****XX to prevent key leakage in error messages.
+func maskAPIKey(s string) string {
+	// apiKey= 뒤의 값을 마스킹
+	result := s
+	for {
+		idx := strings.Index(result, "apiKey=")
+		if idx < 0 {
+			break
+		}
+		start := idx + len("apiKey=")
+		end := start
+		for end < len(result) && result[end] != '&' && result[end] != '"' && result[end] != ' ' && result[end] != '\n' {
+			end++
+		}
+		key := result[start:end]
+		var masked string
+		if len(key) > 4 {
+			masked = key[:2] + strings.Repeat("*", len(key)-4) + key[len(key)-2:]
+		} else {
+			masked = strings.Repeat("*", len(key))
+		}
+		result = result[:start] + masked + result[end:]
 	}
 	return result
 }

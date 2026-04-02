@@ -12,20 +12,25 @@ func WriteToFile(data []map[string]interface{}, outputPath string, opts FormatOp
 	// Detect format from file extension
 	format := DetectFormat(outputPath)
 
-	// Create or truncate the file
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", outputPath, err)
-	}
-	defer file.Close()
-
-	// Set the writer in options
-	opts.Writer = file
-
 	// Get the appropriate formatter
 	formatter, err := NewFormatter(format)
 	if err != nil {
 		return fmt.Errorf("unsupported format '%s': %w", format, err)
+	}
+
+	// Formats that manage their own file I/O (xlsx, sqlite, parquet) receive
+	// the file path instead of an open file handle to avoid file descriptor conflicts.
+	switch format {
+	case "xlsx", "sqlite", "parquet":
+		opts.FilePath = outputPath
+	default:
+		// Stream-based formats (csv, json, table) write to an io.Writer
+		file, err := os.Create(outputPath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %w", outputPath, err)
+		}
+		defer file.Close()
+		opts.Writer = file
 	}
 
 	// Format and write data

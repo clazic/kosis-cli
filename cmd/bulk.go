@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/clazic/kosis-cli/internal/api"
 	"github.com/clazic/kosis-cli/internal/config"
@@ -102,8 +103,25 @@ KOSIS 웹에서 사전 등록된 userStatsId가 필요합니다.
 			return
 		}
 
+		// 경로 검증: 절대 경로로 변환 후 현재 작업 디렉토리를 벗어나는지 확인
+		absOutput, err := filepath.Abs(bulkOutputFlag)
+		if err != nil {
+			fmt.Printf("경로 변환 오류: %v\n", err)
+			return
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Printf("작업 디렉토리 확인 오류: %v\n", err)
+			return
+		}
+		// ".." 컴포넌트가 포함되어 있거나 작업 디렉토리를 벗어나면 거부
+		if strings.Contains(bulkOutputFlag, "..") || !strings.HasPrefix(absOutput, cwd+string(filepath.Separator)) && absOutput != cwd {
+			fmt.Printf("오류: 출력 경로가 현재 작업 디렉토리를 벗어납니다: %s\n", bulkOutputFlag)
+			return
+		}
+
 		// 출력 디렉토리 확인
-		outputDir := filepath.Dir(bulkOutputFlag)
+		outputDir := filepath.Dir(absOutput)
 		if outputDir != "." && outputDir != "" {
 			if err := os.MkdirAll(outputDir, 0755); err != nil {
 				fmt.Printf("디렉토리 생성 오류: %v\n", err)
@@ -112,7 +130,7 @@ KOSIS 웹에서 사전 등록된 userStatsId가 필요합니다.
 		}
 
 		// 파일에 저장
-		if err := os.WriteFile(bulkOutputFlag, data, 0644); err != nil {
+		if err := os.WriteFile(absOutput, data, 0644); err != nil {
 			fmt.Printf("파일 저장 오류: %v\n", err)
 			return
 		}

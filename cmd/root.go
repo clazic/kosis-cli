@@ -32,6 +32,9 @@ KOSIS(국가통계포털) Open API 기반 CLI/TUI 도구입니다.
 주요지표 명령어:
   indicator (ind) 통계주요지표 검색/조회
 
+시각화 명령어:
+  chart           데이터를 차트로 시각화 (터미널/PNG/SVG/PDF/HTML/Excel)
+
 편의 명령어:
   quick  (q)      자연어로 원스텝 조회
   config          설정 관리 (API 키, AI 도구)
@@ -80,6 +83,7 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
+	rootCmd.Version = appVersion
 	rootCmd.SetArgs(normalizeClassShortFlags(os.Args[1:]))
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

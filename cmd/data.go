@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/clazic/kosis-cli/internal/api"
+	"github.com/clazic/kosis-cli/internal/chart"
 	"github.com/clazic/kosis-cli/internal/config"
 	"github.com/clazic/kosis-cli/internal/interactive"
 	"github.com/clazic/kosis-cli/internal/output"
@@ -113,6 +114,13 @@ var dataCmd = &cobra.Command{
 			return
 		}
 
+		// 사용자가 --format을 명시하지 않았으면 config의 default_format 적용
+		if !cmd.Flags().Changed("format") {
+			if cfg, err := config.Load(); err == nil && cfg.DefaultFormat != "" {
+				formatFlag = cfg.DefaultFormat
+			}
+		}
+
 		orgID := args[0]
 		tblID := args[1]
 
@@ -152,15 +160,8 @@ var dataCmd = &cobra.Command{
 			return
 		}
 
-		// 설정 로드
-		cfg, err := config.Load()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "오류: %v\n", err)
-			return
-		}
-
-		// API 클라이언트 생성
-		client, err := api.NewClient(cfg.APIKeys)
+		// API 클라이언트 생성 (캐시 초기화 포함)
+		client, err := NewAPIClient()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 			return
@@ -293,6 +294,49 @@ var dataCmd = &cobra.Command{
 			formatOpts.Columns = fields
 		}
 
+		// --chart가 있으면 차트 렌더링
+		if dataChartFlag != "" {
+			chartType, err := chart.ParseChartType(dataChartFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "오류: %v\n", err)
+				return
+			}
+
+			chartFmt := chart.FormatTerminal
+			if dataChartFmtFlag != "" {
+				chartFmt, err = chart.ParseChartFormat(dataChartFmtFlag)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "오류: %v\n", err)
+					return
+				}
+			}
+
+			seriesList, axisInfo := chart.ExtractSeriesWithAxis(dataMap)
+			if len(seriesList) == 0 {
+				fmt.Fprintln(os.Stderr, "오류: 차트를 생성할 수 있는 데이터가 없습니다")
+				return
+			}
+
+			chartOpts := chart.Options{
+				Type:   chartType,
+				Format: chartFmt,
+				Output: outputFlag,
+				Open:   dataOpenFlag,
+				XLabel: axisInfo.XLabel,
+				YLabel: axisInfo.YLabel,
+			}
+
+			if err := chart.Render(seriesList, chartOpts); err != nil {
+				fmt.Fprintf(os.Stderr, "차트 오류: %v\n", err)
+				return
+			}
+
+			if outputFlag != "" && chartFmt != chart.FormatTerminal {
+				fmt.Fprintf(os.Stderr, "✓ 차트가 %s로 저장되었습니다.\n", outputFlag)
+			}
+			return
+		}
+
 		// --output이 있으면 WriteToFile() 사용
 		if outputFlag != "" {
 			err = output.WriteToFile(dataMap, outputFlag, formatOpts)
@@ -337,19 +381,15 @@ var (
 	fieldsFlag      string
 	userIDFlag      string
 	noAutoSplitFlag bool
+	dataChartFlag   string
+	dataChartFmtFlag string
+	dataOpenFlag    bool
 )
 
 // runDataInteractive implements interactive mode for data command.
 func runDataInteractive() {
-	// 설정 로드
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "오류: %v\n", err)
-		return
-	}
-
-	// API 클라이언트 생성
-	client, err := api.NewClient(cfg.APIKeys)
+	// API 클라이언트 생성 (캐시 초기화 포함)
+	client, err := NewAPIClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "오류: %v\n", err)
 		return
@@ -405,8 +445,16 @@ func runDataInteractive() {
 	var classOptions []string
 	classCodeMap := make(map[int]string)
 	for i, c := range metaSummary.Classifications {
-		classOptions = append(classOptions, fmt.Sprintf("%s (%s)", c.Label, c.Code))
-		classCodeMap[i] = c.Code
+		code := c.Code
+		if code == "" {
+			code = c.ItmID
+		}
+		label := c.Label
+		if label == "" {
+			label = c.ItmNM
+		}
+		classOptions = append(classOptions, fmt.Sprintf("%s (%s)", label, code))
+		classCodeMap[i] = code
 	}
 
 	selectedClassIndices := interactive.MultiSelect("? 지역(분류)을 선택하세요 (공백 구분 번호):", classOptions)
@@ -425,8 +473,16 @@ func runDataInteractive() {
 	var itemOptions []string
 	itemCodeMap := make(map[int]string)
 	for i, it := range metaSummary.Items {
-		itemOptions = append(itemOptions, fmt.Sprintf("%s (%s)", it.Label, it.Code))
-		itemCodeMap[i] = it.Code
+		code := it.Code
+		if code == "" {
+			code = it.ItmID
+		}
+		label := it.Label
+		if label == "" {
+			label = it.ItmNM
+		}
+		itemOptions = append(itemOptions, fmt.Sprintf("%s (%s)", label, code))
+		itemCodeMap[i] = code
 	}
 
 	itemIdx, _ := interactive.Select("? 항목을 선택하세요:", itemOptions)
@@ -591,4 +647,7 @@ func init() {
 	dataCmd.Flags().StringVar(&fieldsFlag, "fields", "", "출력 필드 선택 (\"C1_NM,ITM_NM,PRD_DE,DT\")")
 	dataCmd.Flags().StringVar(&userIDFlag, "user-id", "", "자료등록 방식 (userStatsId로 조회)")
 	dataCmd.Flags().BoolVar(&noAutoSplitFlag, "no-auto-split", false, "4만 셀 초과 시 자동 분할 비활성화")
+	dataCmd.Flags().StringVar(&dataChartFlag, "chart", "", "차트 타입: line, bar, pie")
+	dataCmd.Flags().StringVar(&dataChartFmtFlag, "chart-format", "", "차트 출력 포맷: terminal(기본), png, svg, pdf, html, excel")
+	dataCmd.Flags().BoolVar(&dataOpenFlag, "open", false, "차트 생성 후 자동 열기")
 }

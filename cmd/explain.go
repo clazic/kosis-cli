@@ -139,7 +139,7 @@ func runExplain(cmd *cobra.Command, args []string) error {
 	data := make([]map[string]interface{}, len(results))
 	for i, item := range results {
 		data[i] = map[string]interface{}{
-			"ORG_ID":        item.OrgNM,
+			"ORG_ID":        item.OrgID,
 			"ORG_NM":        item.OrgNM,
 			"TBL_ID":        "",
 			"TBL_NM":        "",

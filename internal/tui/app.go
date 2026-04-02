@@ -568,6 +568,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.textInput.Width = msg.Width/3 - 12
 	}
 	return m, nil
 }
@@ -671,8 +672,6 @@ func (m Model) renderSearchSection(width int) string {
 
 	var content string
 	if m.typing {
-		// textinput 컴포넌트의 너비를 섹션에 맞춤
-		m.textInput.Width = width - 12
 		content = "🔍 검색: " + m.textInput.View() + "\n(Enter: 검색, Esc: 취소)"
 	} else {
 		searchDisplay := truncateText(m.searchInput, width-12)

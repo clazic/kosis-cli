@@ -36,28 +36,13 @@ func (jf *JSONFormatter) Format(data []map[string]interface{}, opts FormatOption
 	// Determine if we should pretty print
 	isTTY := IsTTY(opts.Writer)
 
-	var jsonBytes []byte
-	var err error
-
+	enc := json.NewEncoder(opts.Writer)
 	if isTTY {
-		// Pretty print with indent for TTY
-		jsonBytes, err = json.MarshalIndent(output, "", "  ")
-	} else {
-		// Compact for pipes
-		jsonBytes, err = json.Marshal(output)
+		enc.SetIndent("", "  ")
 	}
-
-	if err != nil {
-		return fmt.Errorf("failed to marshal JSON: %w", err)
-	}
-
-	_, err = opts.Writer.Write(jsonBytes)
-	if err != nil {
+	if err := enc.Encode(output); err != nil {
 		return fmt.Errorf("failed to write JSON: %w", err)
 	}
-
-	// Add newline for readability
-	fmt.Fprint(opts.Writer, "\n")
 
 	return nil
 }
