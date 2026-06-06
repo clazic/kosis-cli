@@ -1,0 +1,10 @@
+{
+  "name": "kosis",
+  "version": "0.2.0",
+  "description": "KOSIS(국가통계포털) OpenAPI CLI/TUI 통계 조회 도구",
+  "author": { "name": "clazic" },
+  "repository": "https://github.com/clazic/kosis-cli",
+  "license": "MIT",
+  "keywords": ["kosis", "statistics", "korea", "openapi", "cli"],
+  "skills": ["./"]
+}

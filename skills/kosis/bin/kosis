@@ -1,0 +1,23 @@
+#!/bin/sh
+# KOSIS Unix shim — 스킬 폴더 내 바이너리를 찾아 실행, 없으면 자동 설치
+set -e
+
+SKILL_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+BIN="$SKILL_DIR/apps/kosis"
+
+# 바이너리 존재 시 바로 실행
+if [ -x "$BIN" ]; then
+  exec "$BIN" "$@"
+fi
+
+# 없으면 install-binary.sh 실행
+echo "kosis 바이너리가 없습니다. 자동 설치를 시작합니다..." >&2
+sh "$SKILL_DIR/scripts/install-binary.sh"
+
+if [ -x "$BIN" ]; then
+  exec "$BIN" "$@"
+else
+  echo "오류: 바이너리 설치에 실패했습니다." >&2
+  echo "수동 설치: https://github.com/clazic/kosis-cli/releases" >&2
+  exit 1
+fi
