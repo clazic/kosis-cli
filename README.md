@@ -9,7 +9,7 @@ KOSIS(국가통계포털) OpenAPI CLI/TUI 도구 — 한국 통계 데이터를 
 ### npm
 
 ```bash
-npm install -g kosis
+npm install -g @clazic/kosis
 ```
 
 ### macOS / Linux
