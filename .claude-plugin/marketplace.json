@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "clazic",
+  "description": "KOSIS CLI — 한국 국가통계포털 OpenAPI CLI/TUI 도구",
+  "owner": {
+    "name": "clazic"
+  },
+  "plugins": [
+    {
+      "name": "kosis",
+      "description": "KOSIS(국가통계포털) OpenAPI로 한국 통계 데이터를 검색·조회·시각화하는 CLI/TUI 도구",
+      "version": "0.3.0",
+      "author": {
+        "name": "clazic"
+      },
+      "source": "skills/kosis",
+      "category": "data",
+      "homepage": "https://github.com/clazic/kosis-cli",
+      "tags": ["kosis", "statistics", "korea", "openapi", "cli", "data"]
+    }
+  ],
+  "version": "0.3.0"
+}
