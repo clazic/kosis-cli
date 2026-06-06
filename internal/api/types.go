@@ -233,8 +233,8 @@ type ExplainResult struct {
 
 // IndicatorResult represents indicator data from indicator APIs.
 type IndicatorResult struct {
-	StatJipyoID  string `json:"statJipyoId"`
-	StatJipyoNM  string `json:"statJipyoNm"`
+	StatJipyoID  string `json:"jipyoId"`
+	StatJipyoNM  string `json:"jipyoNm"`
 	JipyoExplan  string `json:"jipyoExplan"`
 	JipyoExplan1 string `json:"jipyoExplan1"`
 	DataValue    string `json:"dataValue"`

@@ -9,6 +9,7 @@ import (
 	"github.com/clazic/kosis-cli/internal/api"
 	"github.com/clazic/kosis-cli/internal/chart"
 	"github.com/clazic/kosis-cli/internal/config"
+	"github.com/clazic/kosis-cli/internal/history"
 	"github.com/clazic/kosis-cli/internal/interactive"
 	"github.com/clazic/kosis-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -24,51 +25,71 @@ var dataCmd = &cobra.Command{
 분류, 항목, 시점을 지정하여 원하는 데이터를 가져옵니다.
 인자 없이 실행하면 대화형 모드로 단계별 안내합니다.
 
-⚠ 조회 전 반드시 kosis meta로 분류/항목 코드를 확인하세요.
-  4만 셀 초과 시 자동으로 분할 조회합니다.
+주의: 조회 전 반드시 kosis meta로 분류/항목 코드를 확인하세요.
+      4만 셀 초과 시 자동으로 분할 조회합니다.
 
 사용법:
   kosis data <ORG_ID> <TBL_ID> [flags]
   kosis d <ORG_ID> <TBL_ID> [flags]
-  kosis data                              대화형 모드
+  kosis data                             대화형 모드
 
 파라미터:
-  <ORG_ID>              기관 코드 (예: 101, 116, 301)
-  <TBL_ID>              통계표 ID (예: DT_1IN1502, DT_MLTM_2086)
+  <ORG_ID>                 기관 코드 (예: 101, 116, 301)
+  <TBL_ID>                 통계표 ID (예: DT_1IN1502, DT_MLTM_2086)
 
 필수 플래그 (--user-id 미사용 시):
-  -c1, --class1 <값>    분류1 코드 (ALL, "00+11", "11*")
-  -i,  --item <값>      항목 코드 (ALL, "T10+T20")
-  -p,  --period <코드>  수록주기 (Y=연, M=월, Q=분기, H=반기)
+  -c1, --class1 <값>      분류1 코드 (ALL, "00+11", "11*")
+  -i,  --item <값>         항목 코드 (ALL, "T10+T20")
+  -p,  --period <코드>     수록주기
 
-호환성 안내:
-  root 명령이 -c1 ~ -c8 입력을 --class1 ~ --class8로 정규화합니다.
-  따라서 예제처럼 -c1 형식도 사용할 수 있습니다.
+추가 분류 플래그:
+  -c2 ~ -c8               분류2~8 코드 (통계표에 분류가 여러 개일 때)
 
 시점 플래그 (택1, 미지정시 최근 1개):
-  -s, --start <시점>    시작 시점 (예: 2020, 202401)
-  -e, --end <시점>      종료 시점 (예: 2024, 202412)
-  -l, --latest <N>      최근 N개 시점
-  --periods <시점들>     비연속 시점 지정 (쉼표 구분, 예: "2020,2022,2025")
+  -s, --start <시점>      시작 시점 (예: 2020, 202401)
+  -e, --end <시점>         종료 시점 (예: 2024, 202412)
+  -l, --latest <N>         최근 N개 시점
+  --periods <시점들>       비연속 시점 (쉼표 구분, 예: "2020,2022,2025")
 
-시점 플래그 사용 방법:
-  · --start + --end     연속 범위 (예: 2020~2024 전체)
-  · --latest N          최근 N개 시점
-  · --periods           원하는 시점만 골라서 (예: 2020,2022,2025)
-  · 미지정              최근 1개 시점
+출력 플래그:
+  -f, --format <type>      출력 형식: table(기본), json, csv, md
+  -o, --output <파일>      파일 저장 (.csv/.xlsx/.json/.db/.parquet)
+  --fields <필드목록>      출력 필드 선택 ("C1_NM,ITM_NM,PRD_DE,DT")
 
-선택 플래그:
-  -c2 ~ -c8, --class2 ~ --class8  분류2~8 코드
-  -f, --format <type>   출력 형식: table(기본), json, csv
-  -o, --output <파일>   파일 저장 (.csv/.xlsx/.json/.db/.parquet)
-  --fields <필드목록>    출력 필드 선택 ("C1_NM,ITM_NM,PRD_DE,DT")
-  --user-id <ID>        자료등록 방식 (userStatsId로 조회, class/item/period 생략 가능)
-  --no-auto-split       4만 셀 초과 시 자동 분할 비활성화
+차트 플래그:
+  --chart <타입>           차트 생성: line, bar, pie
+  --chart-format <포맷>    차트 포맷: terminal(기본), png, svg, pdf, html, excel, mermaid
+  --title <제목>           차트 제목 (상단 중앙 표시)
+  --subtitle <부제>        차트 부제목
+  --source <출처>          출처 표시
+  --note <주석>            주석 표시
+  --template <이름>        HTML 템플릿 (line-chart, comparison, bar-rank, pie-share 등)
+  --open                   생성 후 자동 열기
+
+기타 플래그:
+  --user-id <ID>           자료등록 방식 (userStatsId로 조회, 필수 플래그 생략 가능)
+  --no-auto-split          4만 셀 초과 시 자동 분할 비활성화
+
+수록주기(-p) 코드표:
+  meta 표시    -p 값        시점 형식       예시
+  ─────────────────────────────────────────────────
+  prdSe=년     Y 또는 "년"  2024            -p Y -l 5
+  prdSe=월     M 또는 "월"  202401          -p M -s 202401 -e 202412
+  prdSe=분기   Q 또는 "분기" 20241          -p Q -l 4
+  prdSe=반기   H 또는 "반기" 20241          -p H -l 2
+  prdSe=5년    F 또는 "5년"  2015           -p F -l 3
 
 값 지정 규칙:
-  ALL                   전체 선택
-  "00+11+21"            복수 선택 (+로 구분)
-  "11*"                 하위 전체 (* 접미사)`,
+  ALL                      전체 선택
+  "00+11+21"               복수 선택 (+로 구분)
+  "11*"                    하위 전체 (* 접미사)
+
+시점 플래그 조합 규칙:
+  --start + --end          연속 범위 (예: 2020~2024)
+  --latest N               최근 N개 시점
+  --periods                원하는 시점만 골라서
+  미지정                   최근 1개 시점
+  (세 종류를 혼합 사용 불가)`,
 
 	Example: `  # 서울 미분양 최근 6개월
   kosis d 116 DT_MLTM_2086 -c1 "11" -i T10 -p M -l 6
@@ -82,22 +103,46 @@ var dataCmd = &cobra.Command{
   # 특정 월만 골라서 조회
   kosis d 101 DT_1J20001 -c1 "0" -i T10 -p M --periods "202401,202407,202501"
 
+  # GDP 최근 5년, Markdown 테이블 출력
+  kosis d 301 DT_200Y001 -c1 "10100" -i T01 -p Y -l 5 -f md
+
   # GDP 최근 5년, 엑셀로 저장
   kosis d 301 DT_200Y001 -c1 "10100" -i T01 -p Y -l 5 -o gdp.xlsx
 
   # 소비자물가 월별 JSON → jq 파이프
   kosis d 101 DT_1J20001 -c1 "0" -i T10 -p M -l 12 -f json | jq '.[].DT'
 
-  # 대용량: 전국 읍면동 인구 전체 → SQLite
+  # 대용량: 전국 인구 전체 → SQLite
   kosis d 101 DT_1IN1502 -c1 ALL -i ALL -p Y -s 2015 -e 2024 -o 인구.db
+
+  # 차트: 울산 인구추이 라인차트
+  kosis d 101 DT_1IN1502 -c1 26 -i T100 -p Y -l 10 --chart line --title "울산 인구추이"
+
+  # 차트: HTML 인터랙티브
+  kosis d 101 DT_1IN1502 -c1 26 -i T100 -p Y -l 10 --chart line --chart-format html -o pop.html --open
 
   # 대화형 모드 (단계별 안내)
   kosis data
 
-다음 단계:
-  조회 결과를 저장하거나 후속 분석하려면:
-  kosis d <ORG_ID> <TBL_ID> ... -o result.xlsx
-  kosis d <ORG_ID> <TBL_ID> ... -f json | jq '.'`,
+주의 (에러 방지):
+  - 분류/항목에 한글 이름 사용 금지 → 코드만 사용 (에러 21)
+  - 검색어에 연도 포함 금지 (search에서)
+  - 존재하지 않는 시점 요청 시 에러 30 → -l 5로 먼저 가용 시점 확인
+  - prdSe=5년 통계표에 -p Y 사용 시 에러 30 → -p F 사용
+  - ALL 사용 시 4만 셀 초과 가능 → 자동 분할 처리됨
+  - 분류 코드 10개 이상 + 나열 금지 → ALL 또는 "접두사*" 사용
+
+자주 쓰는 통계표:
+  인구          kosis d 101 DT_1IN1502 -c1 00 -i T100 -p Y -l 5
+  미분양        kosis d 116 DT_MLTM_2086 -c1 00 -i T10 -p M -l 6
+  소비자물가    kosis d 101 DT_1J20001 -c1 0 -i T10 -p M -l 12
+  GDP           kosis d 301 DT_200Y001 -c1 10100 -i T01 -p Y -l 5
+  경제활동인구  kosis d 101 DT_1DA7002S -c1 00 -i ALL -p M -l 6
+
+관련 명령어:
+  kosis search <키워드>            통계표 검색 (ORG_ID, TBL_ID 확인)
+  kosis meta <ORG_ID> <TBL_ID>    메타데이터 확인 (분류/항목 코드 확인)
+  kosis bulk <userStatsId>         대용량 SDMX/XLS 다운로드`,
 
 	Run: func(cmd *cobra.Command, args []string) {
 		// 대화형 모드: 인자가 없으면 단계별 입력
@@ -318,13 +363,17 @@ var dataCmd = &cobra.Command{
 			}
 
 			chartOpts := chart.Options{
-				Type:   chartType,
-				Format: chartFmt,
-				Title:  dataChartTitle,
-				Output: outputFlag,
-				Open:   dataOpenFlag,
-				XLabel: axisInfo.XLabel,
-				YLabel: axisInfo.YLabel,
+				Type:     chartType,
+				Format:   chartFmt,
+				Title:    dataChartTitle,
+				Output:   outputFlag,
+				Open:     dataOpenFlag,
+				XLabel:   axisInfo.XLabel,
+				YLabel:   axisInfo.YLabel,
+				Template: dataChartTpl,
+				Subtitle: dataChartSub,
+				Source:   dataChartSrc,
+				Note:     dataChartNote,
 			}
 
 			if err := chart.Render(seriesList, chartOpts); err != nil {
@@ -359,6 +408,10 @@ var dataCmd = &cobra.Command{
 				return
 			}
 		}
+
+		// Record history (simplified representation)
+		histCmd := fmt.Sprintf("data %s %s -c1 %s -i %s -p %s", orgID, tblID, class1Flag, itemFlag, periodFlag)
+		history.Add(histCmd, len(results))
 	},
 }
 
@@ -384,7 +437,11 @@ var (
 	noAutoSplitFlag bool
 	dataChartFlag    string
 	dataChartFmtFlag string
-	dataChartTitle   string
+	dataChartTitle    string
+	dataChartTpl     string
+	dataChartSub     string
+	dataChartSrc     string
+	dataChartNote    string
 	dataOpenFlag     bool
 )
 
@@ -652,5 +709,9 @@ func init() {
 	dataCmd.Flags().StringVar(&dataChartFlag, "chart", "", "차트 타입: line, bar, pie")
 	dataCmd.Flags().StringVar(&dataChartFmtFlag, "chart-format", "", "차트 출력 포맷: terminal(기본), png, svg, pdf, html, excel, mermaid")
 	dataCmd.Flags().StringVar(&dataChartTitle, "title", "", "차트 제목")
+	dataCmd.Flags().StringVar(&dataChartTpl, "template", "", "HTML 템플릿 (line-chart, comparison, bar-rank, pie-share)")
+	dataCmd.Flags().StringVar(&dataChartSub, "subtitle", "", "차트 부제목")
+	dataCmd.Flags().StringVar(&dataChartSrc, "source", "", "출처")
+	dataCmd.Flags().StringVar(&dataChartNote, "note", "", "주석")
 	dataCmd.Flags().BoolVar(&dataOpenFlag, "open", false, "차트 생성 후 자동 열기")
 }

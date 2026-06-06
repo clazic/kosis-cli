@@ -76,9 +76,7 @@ func (c *Client) IndicatorSearchByName(jipyoNm string, opts PaginationOptions) (
 // IndicatorList retrieves indicators from an indicator list.
 // Uses indiListService.do?method=getList&service=3
 func (c *Client) IndicatorList(listID string, opts PaginationOptions) ([]IndicatorResult, error) {
-	if listID == "" {
-		return nil, fmt.Errorf("목록 ID는 필수입니다")
-	}
+	// API might handle empty listID as root request.
 
 	params := map[string]string{
 		"listId":  listID,

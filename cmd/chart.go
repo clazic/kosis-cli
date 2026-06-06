@@ -15,50 +15,83 @@ import (
 var chartCmd = &cobra.Command{
 	Use:   "chart [flags]",
 	Short: "데이터를 차트로 시각화",
-	Long: `데이터를 차트로 시각화합니다.
+	Long: `데이터를 차트로 시각화
 
 stdin(파이프)이나 파일에서 JSON/CSV 데이터를 읽어
-터미널, 이미지(PNG/SVG/PDF), HTML, Excel 차트로 출력합니다.
+터미널, 이미지(PNG/SVG/PDF), HTML, Excel, Mermaid 차트로 출력합니다.
+
+참고: kosis data ... --chart line 으로도 직접 차트를 생성할 수 있습니다.
 
 사용법:
   kosis chart [flags]
   kosis data ... -f json | kosis chart --type line
   kosis chart --input data.json --type bar --format png -o chart.png
 
-플래그:
-  -i, --input <파일>      입력 파일 (JSON/CSV). 미지정시 stdin
-  -t, --type <타입>       차트 타입: line(기본), bar, pie
-      --format <포맷>     출력 포맷: terminal(기본), png, svg, pdf, html, excel
-  -o, --output <파일>     출력 파일 경로 (이미지/HTML/Excel 필수)
-      --title <제목>      차트 제목
-      --width <너비>      차트 너비
-      --height <높이>     차트 높이
-      --open              생성 후 브라우저/뷰어로 자동 열기`,
+입력 플래그:
+  -i, --input <파일>       입력 파일 (JSON/CSV). 미지정시 stdin
+
+차트 설정:
+  -t, --type <타입>        차트 타입: line(기본), bar, pie
+  --format <포맷>          출력 포맷: terminal(기본), png, svg, pdf, html, excel, mermaid
+
+출력 플래그:
+  -o, --output <파일>      출력 파일 경로 (이미지/HTML/Excel 필수)
+  --title <제목>           차트 제목
+  --subtitle <부제>        차트 부제목
+  --source <출처>          출처 표시
+  --note <주석>            주석 표시
+  --template <이름>        HTML 템플릿 (line-chart, comparison, bar-rank, ...)
+  --width <너비>           차트 너비 (px)
+  --height <높이>          차트 높이 (px)
+  --open                   생성 후 브라우저/뷰어로 자동 열기`,
 
 	Example: `  # 파이프: 데이터 조회 후 터미널 차트
   kosis d 101 DT_1IN1502 -c1 26 -i T100 -p Y -l 10 -f json | kosis chart
 
-  # 파이프: HTML 차트 생성
+  # 파이프: HTML 인터랙티브 차트
   kosis d 101 DT_1IN1502 -c1 26 -i T100 -p Y -l 10 -f json | kosis chart --format html -o pop.html --open
 
   # 파일 입력: PNG 이미지
   kosis chart -i data.json -t bar --format png -o chart.png
 
   # 파일 입력: Excel 차트
-  kosis chart -i data.json --format excel -o chart.xlsx`,
+  kosis chart -i data.json --format excel -o chart.xlsx
+
+  # Mermaid 출력 (Markdown 삽입용)
+  kosis d 101 DT_1IN1502 -c1 26 -i T100 -p Y -l 5 -f json | kosis chart --format mermaid
+
+HTML 템플릿:
+  line-chart       시계열 추이
+  comparison       비교 분석 (차트+테이블+비중)
+  bar-rank         항목별 순위 (가로 막대)
+  bar-vertical     세로 막대 비교
+  stacked-bar      누적 막대 (구성비)
+  pie-share        구성비 (도넛 차트)
+  area             영역 차트
+  dual-axis        이중 Y축
+  heatmap          히트맵
+  treemap          트리맵
+  dashboard        대시보드 (여러 차트 한 페이지)
+
+관련 명령어:
+  kosis data ... --chart line    데이터 조회와 차트를 한 번에`,
 
 	Run: runChart,
 }
 
 var (
-	chartInputFlag  string
-	chartTypeFlag   string
-	chartFormatFlag string
-	chartTitleFlag  string
-	chartWidthFlag  int
-	chartHeightFlag int
-	chartOutputFlag string
-	chartOpenFlag   bool
+	chartInputFlag    string
+	chartTypeFlag     string
+	chartFormatFlag   string
+	chartTitleFlag    string
+	chartWidthFlag    int
+	chartHeightFlag   int
+	chartOutputFlag   string
+	chartOpenFlag     bool
+	chartTemplateFlag string
+	chartSubtitleFlag string
+	chartSourceFlag   string
+	chartNoteFlag     string
 )
 
 func runChart(cmd *cobra.Command, args []string) {
@@ -102,15 +135,19 @@ func runChart(cmd *cobra.Command, args []string) {
 	}
 
 	opts := chart.Options{
-		Type:   chartType,
-		Format: chartFormat,
-		Title:  chartTitleFlag,
-		Width:  chartWidthFlag,
-		Height: chartHeightFlag,
-		Output: output,
-		Open:   chartOpenFlag,
-		XLabel: axisInfo.XLabel,
-		YLabel: axisInfo.YLabel,
+		Type:     chartType,
+		Format:   chartFormat,
+		Title:    chartTitleFlag,
+		Width:    chartWidthFlag,
+		Height:   chartHeightFlag,
+		Output:   output,
+		Open:     chartOpenFlag,
+		XLabel:   axisInfo.XLabel,
+		YLabel:   axisInfo.YLabel,
+		Template: chartTemplateFlag,
+		Subtitle: chartSubtitleFlag,
+		Source:   chartSourceFlag,
+		Note:     chartNoteFlag,
 	}
 
 	if err := chart.Render(seriesList, opts); err != nil {
@@ -210,4 +247,8 @@ func init() {
 	chartCmd.Flags().IntVar(&chartWidthFlag, "width", 0, "차트 너비")
 	chartCmd.Flags().IntVar(&chartHeightFlag, "height", 0, "차트 높이")
 	chartCmd.Flags().BoolVar(&chartOpenFlag, "open", false, "생성 후 자동 열기")
+	chartCmd.Flags().StringVar(&chartTemplateFlag, "template", "", "HTML 템플릿 (line-chart, comparison, bar-rank, pie-share)")
+	chartCmd.Flags().StringVar(&chartSubtitleFlag, "subtitle", "", "부제목")
+	chartCmd.Flags().StringVar(&chartSourceFlag, "source", "", "출처")
+	chartCmd.Flags().StringVar(&chartNoteFlag, "note", "", "주석")
 }

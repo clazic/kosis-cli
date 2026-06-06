@@ -1,3 +1,9 @@
 .env
 scripts/.env
 .playwright-cli/
+.DS_Store
+bin/
+kosis
+dist/
+*.tar.gz
+*.zip

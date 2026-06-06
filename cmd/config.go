@@ -1,22 +1,68 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/clazic/kosis-cli/internal/api"
 	"github.com/clazic/kosis-cli/internal/cache"
 	"github.com/clazic/kosis-cli/internal/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "설정 관리",
-	Long: `설정 관리 명령어
+	Long: `설정 관리
 
-API 키, AI 도구, 출력 형식 등의 설정을 관리합니다.`,
+API 키, AI 도구, 출력 형식 등의 설정을 관리합니다.
+인자 없이 실행하면 현재 설정을 표시합니다.
+설정은 ~/.kosis/config.yaml에 저장됩니다.
+
+사용법:
+  kosis config [subcommand]
+
+하위 명령어:
+  set-key <KEY>            API 키 설정 (단일, 기존 키 교체)
+  add-key <KEY>            API 키 추가 (기존 키 유지, 병렬 조회용)
+  remove-key <INDEX>       API 키 제거 (인덱스)
+  key-list                 등록된 API 키 목록
+  show                     현재 설정 표시
+
+  set-ai <도구>            기본 AI 도구 설정
+  ai-add <이름> <명령어>   커스텀 AI 도구 추가
+  ai-remove <이름>         AI 도구 제거
+  ai-list                  등록된 AI 도구 목록
+
+  cache-clear              캐시 전체 삭제
+  cache-size               캐시 크기 확인
+  cache-clean              만료된 캐시 정리
+
+예제:
+  # API 키 설정
+  kosis config set-key "your_api_key"
+
+  # API 키 추가 (병렬 조회 속도 향상)
+  kosis config add-key "api_key_2"
+
+  # 현재 설정 확인
+  kosis config show
+
+  # AI 도구 설정
+  kosis config set-ai claude
+  kosis config ai-add ollama "ollama run llama3 '{prompt}'"
+
+  # 캐시 정리
+  kosis config cache-clean
+
+설정 파일 경로:
+  macOS/Linux: ~/.kosis/config.yaml
+  Windows:     %USERPROFILE%\.kosis\config.yaml`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.Load()
 		if err != nil {
@@ -49,8 +95,19 @@ var setKeyCmd = &cobra.Command{
 	Short: "API 키 설정 (단일)",
 	Long: `API 키를 설정합니다. 기존 키는 모두 제거됩니다.
 
-예시:
-  kosis config set-key "your_api_key"`,
+사용법:
+  kosis config set-key <API_KEY>
+
+예제:
+  kosis config set-key "your_api_key"
+
+주의:
+  기존에 등록된 모든 키가 제거되고 새 키 하나만 남습니다.
+  키를 추가하려면 kosis config add-key를 사용하세요.
+
+다음 단계:
+  kosis config add-key <KEY>    병렬 조회용 키 추가
+  kosis config show              설정 확인`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
@@ -67,9 +124,19 @@ var addKeyCmd = &cobra.Command{
 	Short: "API 키 추가",
 	Long: `새로운 API 키를 추가합니다. 기존 키는 유지됩니다.
 
-예시:
+여러 키를 등록하면 대용량 조회 시 병렬로 API를 호출하여
+속도가 향상됩니다.
+
+사용법:
+  kosis config add-key <API_KEY>
+
+예제:
   kosis config add-key "api_key_2"
-  kosis config add-key "api_key_3"`,
+  kosis config add-key "api_key_3"
+
+다음 단계:
+  kosis config key-list     등록된 키 목록 확인
+  kosis config show          전체 설정 확인`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
@@ -143,7 +210,12 @@ var showCmd = &cobra.Command{
 	Short: "전체 설정 표시",
 	Long: `현재 설정을 YAML 형식으로 표시합니다.
 
-예시:
+표시 항목: API 키, 기본 출력 형식, 캐시 TTL, AI 도구 목록
+
+사용법:
+  kosis config show
+
+예제:
   kosis config show`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.Load()
@@ -390,9 +462,77 @@ func formatBytes(bytes int64) string {
 	}
 }
 
+var setupCmd = &cobra.Command{
+	Use:   "setup",
+	Short: "대화형 초기 설정 마법사",
+	Long: `KOSIS API 키를 대화형으로 입력하고 검증합니다.
+
+키 발급: https://kosis.kr/openapi/
+
+사용법:
+  kosis config setup`,
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("KOSIS API 키 설정")
+		fmt.Println("─────────────────────────────────────")
+		fmt.Println("키 발급: https://kosis.kr/openapi/")
+		fmt.Println()
+
+		reader := bufio.NewReader(os.Stdin)
+
+		for {
+			var key string
+			if term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Print("API Key 입력: ")
+				b, err := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Println()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "입력 오류: %v\n", err)
+					return
+				}
+				key = strings.TrimSpace(string(b))
+			} else {
+				fmt.Print("API Key 입력: ")
+				line, _ := reader.ReadString('\n')
+				key = strings.TrimSpace(line)
+			}
+
+			if key == "" {
+				fmt.Println("키를 입력해주세요.")
+				continue
+			}
+
+			fmt.Print("키 검증 중... ")
+			client, err := api.NewClient([]string{key})
+			if err == nil {
+				_, err = client.Search("인구", api.SearchOptions{ResultCount: 1})
+			}
+			if err != nil {
+				fmt.Println("✗ 검증 실패")
+				fmt.Printf("오류: %v\n", err)
+				fmt.Println("키를 다시 확인하거나 https://kosis.kr/openapi/ 에서 재발급하세요.")
+				fmt.Println()
+				continue
+			}
+
+			if err := config.SetDefaultKey(key); err != nil {
+				fmt.Fprintf(os.Stderr, "저장 실패: %v\n", err)
+				return
+			}
+
+			fmt.Println("✓ 검증 성공. ~/.kosis/config.yaml 저장 완료.")
+			fmt.Println()
+			fmt.Println("이제 다음 명령으로 시작하세요:")
+			fmt.Println("  kosis s \"인구\"          # 통계표 검색")
+			fmt.Println("  kosis q \"GDP 최근 5년\"  # 자연어 조회")
+			return
+		}
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 
+	configCmd.AddCommand(setupCmd)
 	configCmd.AddCommand(setKeyCmd)
 	configCmd.AddCommand(addKeyCmd)
 	configCmd.AddCommand(removeKeyCmd)

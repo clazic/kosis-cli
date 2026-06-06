@@ -29,28 +29,63 @@ var quickCmd = &cobra.Command{
 	Use:     "quick <사용자요청>",
 	Aliases: []string{"q"},
 	Short:   "자연어로 통계 조회 (규칙 기반 또는 AI)",
-	Long: `자연어로 통계 데이터를 조회합니다.
+	Long: `KOSIS 원스텝 조회
 
-기본: 규칙 기반 매칭으로 명령어를 자동 구성하고 실행합니다.
---ai 플래그 사용 시: AI 도구가 자연어를 kosis 명령어로 변환합니다.
+자연어로 통계 데이터를 한 번에 조회합니다.
+내부적으로 검색 -> 메타 확인 -> 데이터 조회를 자동 수행합니다.
+
+기본: 규칙 기반 키워드 매칭 (오프라인 동작)
+--ai 플래그 사용 시: 외부 AI CLI 도구로 명령어 생성
 
 사용법:
-  kosis quick "서울 미분양 최근 6개월"               규칙 기반 조회
-  kosis quick "서울 미분양 최근 6개월" --ai claude  Claude AI 사용
-  kosis q "GDP 비교" --ai ollama                    커스텀 AI 도구 사용
-  kosis q                                            대화형 모드
+  kosis quick "<자연어 요청>" [flags]
+  kosis q "<자연어 요청>"
+  kosis q                              대화형 모드
 
 플래그:
-  --ai <도구>       AI 도구 지정 (claude, gemini, codex, 또는 커스텀)
-                   미지정 시 규칙 기반, 설정된 기본값 사용 시 자동 감지
-  -f, --format      출력 형식 (table, json, csv)
-  -o, --output      파일 저장
+  --ai <도구명>            AI 도구 사용 (claude, gemini, codex 또는 커스텀)
+  -f, --format <type>      출력 형식: table(기본), json, csv, md
+  -o, --output <파일>      파일 저장
+
+예제:
+  # 규칙 기반 (기본)
+  kosis q "서울 미분양 최근 6개월"
+  kosis q "GDP 2020~2024"
+  kosis q "소비자물가 월별"
+  kosis q "전국 인구 최근 5년"
+
+  # AI 사용
+  kosis q "서울과 부산의 미분양 추이 비교" --ai claude
+  kosis q "실업률 추세" --ai ollama
+
+  # 확인 없이 바로 실행
+  kosis q "서울 미분양 최근 6개월" --yes
+
+  # 파일로 저장
+  kosis q "GDP 2020~2024" -o gdp.xlsx
+
+  # 대화형 모드
+  kosis q
+
+인식 가능한 패턴:
+  지역:    서울, 부산, 대구, 인천, 광주, 대전, 울산, 세종, 경기 ...
+  기간:    "최근 N개월/년", "2020~2024", "2020,2022,2025", "월별", "연별"
+  통계:    미분양, GDP, 물가, 인구, 실업률 등 주요 키워드
+
+AI 모드 설명:
+  --ai 플래그를 사용하면 외부 AI CLI 도구가 자연어를 분석하여
+  kosis data 명령어를 자동 생성합니다. 생성된 명령어는 실행 전
+  확인 프롬프트를 표시합니다.
 
 AI 도구 관리:
-  kosis config ai-list                              등록된 도구 목록
-  kosis config set-ai claude                        기본 AI 도구 설정
+  kosis config ai-list                   등록된 도구 목록
+  kosis config set-ai claude             기본 AI 도구 설정
   kosis config ai-add ollama "ollama run llama3 '{prompt}'"
-  kosis config ai-remove <도구명>`,
+  kosis config ai-remove <도구명>
+
+관련 명령어:
+  kosis config set-ai <도구>       기본 AI 도구 설정
+  kosis data ...                   세밀한 파라미터 지정 조회`,
 
 	Example: `  # 규칙 기반 조회
   kosis quick "서울 미분양 최근 6개월"

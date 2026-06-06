@@ -23,26 +23,31 @@ KOSIS 웹에서 사전 등록된 userStatsId가 필요합니다.
   kosis bulk <userStatsId> [flags]
 
 파라미터:
-  <userStatsId>         사전 등록된 통계표 ID
+  <userStatsId>            사전 등록된 통계표 ID
+                           (https://kosis.kr/openapi/ 에서 등록)
 
 플래그:
-  --type <DSD>          SDMX 유형 (기본: DSD)
-  -o, --output <파일>   출력 파일 (.xls/.sdmx)
+  --type <DSD>             SDMX 유형 (기본: DSD)
+  -o, --output <파일>      출력 파일 (.xls/.sdmx)
 
 예제:
   # SDMX 형식으로 다운로드
-  kosis bulk "myid/101/DT_1IN1502/..." --type DSD -o data.sdmx
+  kosis bulk "myid/101/DT_1IN1502/2/1/20191106094026_1" --type DSD -o 통계.sdmx
 
   # XLS 형식으로 다운로드
-  kosis bulk "myid/101/DT_1IN1502/..." -o data.xls
+  kosis bulk "myid/101/DT_1IN1502/..." -o 통계.xls
+
+용량 제한:
+  4만 셀 이하    kosis data 명령어로 직접 조회 (자동 분할 지원)
+  4만~20만 셀    bulk 다운로드 필요 (XLS만 가능)
+  20만 셀 초과   불가 (범위 축소 필요)
 
 주의:
-  · 4만~20만 건: XLS만 가능
-  · 20만 초과: 불가 (범위 축소 필요)
-  · userStatsId는 KOSIS 웹(https://kosis.kr/openapi/)에서 사전 등록
+  - userStatsId는 KOSIS 웹(https://kosis.kr/openapi/)에서 사전 등록해야 합니다
+  - -o/--output 플래그는 필수입니다
 
 관련 명령어:
-  kosis data ...    파라미터 직접 지정 조회 (4만 셀 이하 또는 자동 분할)`,
+  kosis data ...             파라미터 직접 지정 조회 (4만 셀 이하 또는 자동 분할)`,
 
 	Example: `  # SDMX 형식으로 다운로드
   kosis bulk "myid/101/DT_1IN1502/2/1/20191106094026_1" --type DSD -o 통계.sdmx

@@ -25,18 +25,18 @@ var historyCmd = &cobra.Command{
   kosis hi [flags]
 
 플래그:
-  --limit <N>   표시할 최근 N개 (기본: 10)
+  -n, --limit <N>    표시할 최근 N개 (기본: 10)
 
 하위 명령어:
-  replay <ID>    특정 이력 항목 재실행
-  clear          모든 이력 삭제
+  replay <ID>        특정 이력 항목 재실행
+  clear              모든 이력 삭제
 
 예제:
   # 최근 10개 이력 조회 (기본)
   kosis hi
 
   # 최근 20개 이력 조회
-  kosis hi --limit 20
+  kosis hi -n 20
 
   # 이력 항목 재실행
   kosis hi replay 3
@@ -44,8 +44,8 @@ var historyCmd = &cobra.Command{
   # 모든 이력 삭제
   kosis hi clear
 
-더 알아보기:
-  kosis <command> --help      각 명령어 상세 도움말`,
+관련 명령어:
+  kosis <command> --help     각 명령어 상세 도움말`,
 	Run: func(cmd *cobra.Command, args []string) {
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit <= 0 {
@@ -106,13 +106,19 @@ var historyReplayCmd = &cobra.Command{
 	Long: `이전에 실행한 명령어를 다시 실행합니다.
 
 ID는 history 명령어로 확인할 수 있습니다.
+재실행 시 새 프로세스로 실행되어 현재 상태에 영향을 주지 않습니다.
+
+사용법:
+  kosis history replay <ID>
+  kosis hi replay <ID>
 
 예제:
-  # 최근 이력 확인
+  # 최근 이력 확인 후 재실행
   kosis hi
+  kosis hi replay 3
 
-  # ID 3 항목 재실행
-  kosis hi replay 3`,
+  # 이전 데이터 조회를 다시 실행
+  kosis hi replay 1`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		idStr := args[0]
@@ -150,7 +156,11 @@ var historyClearCmd = &cobra.Command{
 	Short: "모든 이력 삭제",
 	Long: `저장된 모든 조회 이력을 삭제합니다.
 
-이 작업은 되돌릴 수 없습니다.
+이 작업은 되돌릴 수 없습니다. 실행 시 확인 프롬프트가 표시됩니다.
+
+사용법:
+  kosis history clear
+  kosis hi clear
 
 예제:
   kosis hi clear`,

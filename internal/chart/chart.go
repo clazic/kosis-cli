@@ -28,7 +28,8 @@ const (
 	FormatPDF      ChartFormat = "pdf"
 	FormatHTML     ChartFormat = "html"
 	FormatExcel    ChartFormat = "excel"
-	FormatMermaid  ChartFormat = "mermaid"
+	FormatMermaid   ChartFormat = "mermaid"
+	FormatTemplate  ChartFormat = "template"
 )
 
 // Options contains chart rendering options.
@@ -38,10 +39,14 @@ type Options struct {
 	Title  string
 	Width  int
 	Height int
-	Output string // output file path
-	Open   bool   // open after creation
-	XLabel string // x-axis label
-	YLabel string // y-axis label
+	Output   string // output file path
+	Open     bool   // open after creation
+	XLabel   string // x-axis label
+	YLabel   string // y-axis label
+	Template string // template file path (for FormatTemplate)
+	Subtitle string // subtitle text
+	Source   string // source text
+	Note     string // note text
 }
 
 // Series represents a data series for charting.
@@ -82,8 +87,10 @@ func ParseChartFormat(s string) (ChartFormat, error) {
 		return FormatExcel, nil
 	case "mermaid":
 		return FormatMermaid, nil
+	case "template", "tpl":
+		return FormatTemplate, nil
 	default:
-		return "", fmt.Errorf("알 수 없는 차트 포맷: %s (terminal, png, svg, pdf, html, excel, mermaid 중 선택)", s)
+		return "", fmt.Errorf("알 수 없는 차트 포맷: %s (terminal, png, svg, pdf, html, excel, mermaid, template 중 선택)", s)
 	}
 }
 
@@ -229,6 +236,8 @@ func Render(seriesList []Series, opts Options) error {
 		return renderExcel(seriesList, opts)
 	case FormatMermaid:
 		return renderMermaid(seriesList, opts)
+	case FormatTemplate:
+		return renderTemplate(seriesList, opts)
 	default:
 		return fmt.Errorf("지원하지 않는 차트 포맷: %s", opts.Format)
 	}

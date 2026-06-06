@@ -6,9 +6,9 @@ MAC_DIR := $(BIN_DIR)/mac
 LINUX_DIR := $(BIN_DIR)/linux
 WINDOWS_DIR := $(BIN_DIR)/windows
 
-.PHONY: all build build-all clean test vet fmt check
+.PHONY: all build build-all clean test vet fmt check release push help
 
-# 기본: 로컬 빌드 (현재 OS/Arch)
+# 기본: 로컬 빌드
 all: build
 
 build:
@@ -57,6 +57,17 @@ fmt:
 check: fmt vet test build
 	@echo "전체 점검 완료"
 
+# 릴리스 (태그 + 푸시 → GitHub Actions 자동 빌드+npm publish)
+release:
+	@if [ -z "$(TAG)" ]; then echo "사용법: make release TAG=v0.3.0"; exit 1; fi
+	git tag $(TAG) && git push origin $(TAG)
+	@echo "✓ $(TAG) 릴리스 (GitHub Actions → 빌드 → npm publish 자동)"
+
+# GitHub 푸시
+push:
+	git push origin master
+	@echo "✓ master 푸시 완료"
+
 # 정리
 clean:
 	rm -rf $(BIN_DIR) $(APP_NAME)
@@ -65,3 +76,15 @@ clean:
 install: build
 	cp $(BIN_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME)
 	@echo "$(APP_NAME) 설치 완료: /usr/local/bin/$(APP_NAME)"
+
+# 도움말
+help:
+	@echo "사용법:"
+	@echo "  make              현재 OS 빌드"
+	@echo "  make build        현재 OS만 빌드"
+	@echo "  make build-all    전체 OS 빌드 (bin/mac, bin/linux, bin/windows)"
+	@echo "  make release TAG=v0.3.0  릴리스 태그 → 자동 빌드+npm publish"
+	@echo "  make push         master 푸시"
+	@echo "  make test         테스트 실행"
+	@echo "  make check        fmt+vet+test+build"
+	@echo "  make clean        빌드 결과물 삭제"

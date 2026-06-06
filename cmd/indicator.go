@@ -6,6 +6,7 @@ import (
 
 	"github.com/clazic/kosis-cli/internal/api"
 	"github.com/clazic/kosis-cli/internal/config"
+	"github.com/clazic/kosis-cli/internal/history"
 	"github.com/clazic/kosis-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -18,21 +19,18 @@ var indicatorCmd = &cobra.Command{
 	Long: `KOSIS 통계주요지표
 
 1,473개 핵심 통계지표를 간편하게 검색하고 조회합니다.
-통계표(kosis data)와 달리 분류/항목 코드 없이
-지표명만으로 바로 수치를 확인할 수 있습니다.
+통계표(kosis data)의 28만개 테이블과는 별도로 사전 컴파일된 지표 세트입니다.
+분류/항목 코드 없이 지표명만으로 바로 수치를 확인할 수 있습니다.
 
 사용법:
   kosis indicator <subcommand> [flags]
   kosis ind <subcommand>
 
 하위 명령어:
-  search (s)    지표명으로 검색
-  info          지표 상세 설명 (개념, 산식, 출처)
-  data   (d)    지표 수치 데이터 조회
-  list   (ls)   지표 목록 트리 탐색
-
-플래그:
-  -h, --help    도움말
+  search (s)     지표명으로 검색
+  info           지표 상세 설명 (개념, 산식, 출처)
+  data   (d)     지표 수치 데이터 조회
+  list   (ls)    지표 목록 트리 탐색
 
 예제:
   # GDP 지표 검색
@@ -44,16 +42,20 @@ var indicatorCmd = &cobra.Command{
   # 지표 수치 데이터 조회
   kosis ind d "GDP"
 
+  # 엑셀로 저장
+  kosis ind d "GDP" -o gdp.xlsx
+
   # 지표 목록 탐색
   kosis ind ls
+  kosis ind ls I01
 
 통계표(data)와의 차이:
-  kosis data    28만개 통계표, 분류/항목/시점 세밀 조회
-  kosis ind     핵심 지표를 지표명으로 간편 조회
+  kosis data     28만개 통계표, 분류/항목/시점 세밀 조회 (전문가용)
+  kosis ind      1,473개 핵심 지표, 지표명으로 간편 조회 (빠른 확인용)
 
 다음 단계:
-  kosis ind s "키워드"      지표 후보 검색
-  kosis ind info <지표ID>   지표 정의/산식 확인
+  kosis ind s "키워드"       지표 후보 검색
+  kosis ind info <지표ID>    지표 정의/산식 확인
   kosis ind d "지표명"       시계열 수치 조회`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
@@ -74,11 +76,11 @@ var indicatorSearchCmd = &cobra.Command{
   kosis ind s <지표명>
 
 파라미터:
-  <지표명>               검색할 지표명 (필수)
+  <지표명>                 검색할 지표 이름 (필수)
 
 플래그:
-  -n, --limit <N>        결과 수 (기본: 10)
-  -f, --format <type>    출력 형식: table(기본), json
+  -n, --limit <N>          결과 수 (기본: 10)
+  -f, --format <type>      출력 형식: table(기본), json
 
 예제:
   # GDP 지표 검색
@@ -164,6 +166,9 @@ var indicatorSearchCmd = &cobra.Command{
 		}
 
 		fmt.Printf("\n검색 결과: %d개\n", len(results))
+
+		// Record history
+		history.Add("indicator search "+jipyoNm, len(results))
 	},
 }
 
@@ -171,30 +176,30 @@ var indicatorSearchCmd = &cobra.Command{
 var indicatorInfoCmd = &cobra.Command{
 	Use:   "info <지표ID>",
 	Short: "지표 상세 설명 (개념, 산식, 출처)",
-	Long: `지표ID로 지표의 상세 정보를 조회합니다.
+	Long: `통계주요지표의 상세 설명을 조회합니다.
 
-지표의 개념, 산식, 출처 등을 확인할 수 있습니다.
+지표의 개념 정의, 산출 산식, 작성기관, 출처 등을 확인합니다.
 
 사용법:
   kosis indicator info <지표ID> [flags]
   kosis ind info <지표ID>
 
 파라미터:
-  <지표ID>               지표ID (필수, 예: 160, 161, ...)
+  <지표ID>                 지표 ID (ind search 결과에서 확인)
 
 플래그:
-  -f, --format <type>    출력 형식: table(기본), json
+  -f, --format <type>      출력 형식: table(기본), json
 
 예제:
-  # 지표ID 160 상세 정보 조회
+  # GDP 지표 설명
   kosis ind info 160
 
-  # JSON 형식으로 출력
+  # JSON 형식
   kosis ind info 160 -f json
 
-다음 단계:
-  지표 설명 확인 후:
-  kosis ind d <지표명>       지표 수치값 조회`,
+관련 명령어:
+  kosis ind s "키워드"       지표 검색 (ID 확인)
+  kosis ind d "지표명"       지표 수치 데이터 조회`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		jipyoID := args[0]
@@ -270,38 +275,41 @@ var indicatorDataCmd = &cobra.Command{
 	Use:     "data <지표명>",
 	Aliases: []string{"d"},
 	Short:   "지표 수치 데이터 조회",
-	Long: `지표명으로 지표의 수치값을 조회합니다.
+	Long: `통계주요지표 수치 데이터를 조회합니다.
 
-분류/항목 코드 없이 지표명만으로 최신 수치를 빠르게 확인할 수 있습니다.
+지표명이나 지표ID로 시계열 수치를 조회합니다.
 
 사용법:
-  kosis indicator data <지표명> [flags]
-  kosis ind d <지표명>
+  kosis indicator data <지표명|ID> [flags]
+  kosis ind d <지표명|ID>
 
 파라미터:
-  <지표명>               조회할 지표명 (필수)
+  <지표명|ID>              지표 이름 또는 지표 ID
 
 플래그:
-  -n, --limit <N>        결과 수 (기본: 10)
-  -f, --format <type>    출력 형식: table(기본), json
-  -o, --output <파일>    파일 저장 (.csv/.xlsx/.json/.db/.sqlite/.parquet)
+  -n, --limit <N>          결과 수 (기본: 10)
+  -f, --format <type>      출력 형식: table(기본), json, csv, md
+  -o, --output <파일>      파일 저장 (.csv/.xlsx/.json/.db/.sqlite/.parquet)
 
 예제:
-  # GDP 지표 수치 조회
+  # GDP 지표 데이터 조회
   kosis ind d "GDP"
-
-  # 고용률 최근 20개 조회
-  kosis ind d "고용률" -n 20
-
-  # JSON 형식으로 출력
-  kosis ind d "인플레이션" -f json
 
   # 엑셀로 저장
   kosis ind d "GDP" -o gdp.xlsx
 
-다음 단계:
-  더 자세한 정보가 필요하면:
-  kosis ind s <지표명>       지표 검색 (지표ID 확인)`,
+  # 최근 10개 시점
+  kosis ind d "실업률" -n 10
+
+  # Markdown 출력
+  kosis ind d "소비자물가" -f md
+
+  # JSON 출력 (파이프용)
+  kosis ind d "인플레이션" -f json
+
+관련 명령어:
+  kosis ind s "키워드"       먼저 검색하여 정확한 지표명 확인
+  kosis ind info <ID>        지표 개념/산식 확인`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		jipyoNm := args[0]
@@ -385,6 +393,7 @@ var indicatorDataCmd = &cobra.Command{
 			}
 			fmt.Printf("저장 완료: %s (%s)\n", outputFile, detected)
 			fmt.Printf("\n조회 결과: %d개\n", len(results))
+			history.Add("indicator data "+jipyoNm, len(results))
 			return
 		}
 
@@ -408,33 +417,30 @@ var indicatorListCmd = &cobra.Command{
 	Use:     "list [목록ID]",
 	Aliases: []string{"ls"},
 	Short:   "지표 목록 트리 탐색",
-	Long: `지표 목록에서 항목을 트리 형태로 탐색합니다.
-
-목록ID를 지정하지 않으면 전체 목록을 보여줍니다.
+	Long: `통계주요지표 목록을 트리 구조로 탐색합니다.
 
 사용법:
-  kosis indicator list [목록ID] [flags]
-  kosis ind ls [목록ID]
+  kosis indicator list [상위코드]
+  kosis ind ls [상위코드]
 
 파라미터:
-  [목록ID]               지표 목록ID (선택사항)
+  [상위코드]               상위 분류 코드 (선택, 기본: 최상위)
 
 플래그:
-  -f, --format <type>    출력 형식: table(기본), json
+  -f, --format <type>      출력 형식: table(기본), json
 
 예제:
-  # 전체 지표 목록 조회
+  # 최상위 분류 목록
   kosis ind ls
 
-  # 특정 목록ID의 지표 조회
-  kosis ind ls 1
+  # I01 하위 목록 탐색
+  kosis ind ls I01
 
   # JSON 형식으로 출력
   kosis ind ls -f json
 
-다음 단계:
-  목록에서 지표명을 확인한 후:
-  kosis ind d <지표명>       지표 수치 데이터 조회`,
+관련 명령어:
+  kosis ind s "키워드"       키워드로 직접 검색`,
 	Run: func(cmd *cobra.Command, args []string) {
 		listID := ""
 		if len(args) > 0 {

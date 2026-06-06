@@ -16,54 +16,57 @@ var appVersion = "dev"
 const rootHelpText = `KOSIS CLI - 한국 통계 데이터 조회 도구
 
 KOSIS(국가통계포털) Open API 기반 CLI/TUI 도구입니다.
-인자 없이 실행하면 간단한 대시보드/메뉴로 진입합니다.
+인자 없이 실행하면 TUI 대시보드가 열립니다.
 
 사용법:
   kosis [command]
 
 통계표 명령어:
-  search (s)      통계표 키워드 검색
-  meta   (m)      통계표 메타데이터 조회 (분류/항목/수록정보)
-  data   (d)      통계표 데이터 조회
-  list   (ls)     통계목록 트리 탐색
-  explain (ex)    통계 조사 설명
-  bulk            대용량 통계자료 다운로드 (SDMX/XLS)
+  search  (s)       통계표 키워드 검색
+  meta    (m)       통계표 메타데이터 조회 (분류/항목/수록정보)
+  data    (d)       통계표 데이터 조회
+  list    (ls)      통계목록 트리 탐색
+  explain (ex)      통계 조사 설명
+  bulk              대용량 통계자료 다운로드 (SDMX/XLS)
 
 주요지표 명령어:
-  indicator (ind) 통계주요지표 검색/조회
+  indicator (ind)   통계주요지표 검색/조회 (1,473개 핵심 지표)
 
 시각화 명령어:
-  chart           데이터를 차트로 시각화 (터미널/PNG/SVG/PDF/HTML/Excel)
+  chart             데이터를 차트로 시각화 (터미널/PNG/SVG/PDF/HTML/Excel/Mermaid)
 
 편의 명령어:
-  quick  (q)      자연어로 원스텝 조회
-  config          설정 관리 (API 키, AI 도구)
-  bookmark (bm)   즐겨찾기 관리
-  history (hi)    조회 이력 관리
-  completion      셸 자동완성 설정
+  quick    (q)      자연어로 원스텝 조회 (규칙 기반 또는 AI)
+  config            설정 관리 (API 키, AI 도구, 기본 포맷)
+  bookmark (bm)     즐겨찾기 관리
+  history  (hi)     조회 이력 관리
+  completion        셸 자동완성 설정
 
 플래그:
-  -v, --version   버전 정보
-  -h, --help      도움말
+  -v, --version             버전 정보
+  -h, --help                도움말
 
 시작하기:
-  # 1. API 키 설정
+  # 1. API 키 설정 (https://kosis.kr/openapi/ 에서 발급)
   kosis config set-key <YOUR_API_KEY>
 
   # 2. 통계표 검색
   kosis s "인구"
 
-  # 3. 메타데이터 확인
+  # 3. 메타데이터 확인 (분류/항목 코드 파악)
   kosis m 101 DT_1IN1502
 
   # 4. 데이터 조회
   kosis d 101 DT_1IN1502 -c1 "11" -i T100 -p Y -l 5
 
-더 알아보기:
-  kosis <command> --help    각 명령어 상세 도움말
+  # 또는 자연어 한 줄로
+  kosis q "서울 미분양 최근 6개월"
 
-다음 단계:
-  kosis s "인구"             통계표 검색 시작
+표준 워크플로우:
+  검색(search) → 메타 확인(meta) → 시점 확인(data -l 5) → 데이터 조회(data)
+
+더 알아보기:
+  kosis <command> --help     각 명령어 상세 도움말
   kosis data --help          통계표 조회 파라미터 확인
   kosis indicator --help     주요지표 명령어 확인
 `

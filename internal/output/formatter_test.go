@@ -309,8 +309,8 @@ func TestXLSXFormatterNotFile(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for non-file writer")
 	}
-	if !strings.Contains(err.Error(), "파일 기반") {
-		t.Fatalf("expected file-based error message, got: %v", err)
+	if !strings.Contains(err.Error(), "파일 경로(FilePath)가 필요합니다") {
+		t.Fatalf("expected file path error message, got: %v", err)
 	}
 }
 
@@ -329,8 +329,8 @@ func TestSQLiteFormatterNotFile(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for non-file writer")
 	}
-	if !strings.Contains(err.Error(), "파일 기반") {
-		t.Fatalf("expected file-based error message, got: %v", err)
+	if !strings.Contains(err.Error(), "파일 경로(FilePath)가 필요합니다") {
+		t.Fatalf("expected file path error message, got: %v", err)
 	}
 }
 
@@ -349,7 +349,7 @@ func TestParquetFormatterNotFile(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for non-file writer")
 	}
-	if !strings.Contains(err.Error(), "파일 기반") {
-		t.Fatalf("expected file-based error message, got: %v", err)
+	if !strings.Contains(err.Error(), "파일 경로(FilePath)가 필요합니다") {
+		t.Fatalf("expected file path error message, got: %v", err)
 	}
 }
